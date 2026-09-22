@@ -124,3 +124,15 @@ func TestInflightCountsConcurrentRequests(t *testing.T) {
 		t.Errorf("quick request should see the held one in flight: %q", buf.String())
 	}
 }
+
+func TestShortNameTruncatesRunes(t *testing.T) {
+	longPath := "/" + strings.Repeat("日", 50)
+	r, _ := http.NewRequest(http.MethodGet, longPath, nil)
+	got := shortName(r)
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected truncated path to end in ..., got %q", got)
+	}
+	if len([]rune(got)) != 40 {
+		t.Fatalf("expected 40 runes, got %d runes (%q)", len([]rune(got)), got)
+	}
+}

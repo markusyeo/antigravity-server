@@ -53,7 +53,7 @@ func (l *Logger) Wrap(next http.Handler) http.Handler {
 			select {
 			case <-done:
 			default:
-				l.printf("%s OPEN  %5.0fs  %-6s %-40s inflight=%d %s", start.Format("15:04:05.000"), l.openAfter.Seconds(), r.Method, name, l.inflight.Load(), r.Proto)
+				l.printf("%s --- %8.3fs %10s %-6s %-40s inflight=%d %s", start.Format("15:04:05.000"), l.openAfter.Seconds(), "OPEN", r.Method, name, l.inflight.Load(), r.Proto)
 			}
 		})
 		defer func() {
@@ -81,8 +81,9 @@ func shortName(r *http.Request) string {
 	if i := strings.LastIndex(p, "LanguageServerService/"); i >= 0 {
 		return p[i+len("LanguageServerService/"):]
 	}
-	if len(p) > 40 {
-		return p[:37] + "..."
+	runes := []rune(p)
+	if len(runes) > 40 {
+		return string(runes[:37]) + "..."
 	}
 	return p
 }
