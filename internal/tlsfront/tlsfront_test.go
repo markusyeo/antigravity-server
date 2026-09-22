@@ -207,6 +207,34 @@ func TestStatusWithoutCertDomainsExplains(t *testing.T) {
 	}
 }
 
+func TestMagicDNSNameStripsTrailingDot(t *testing.T) {
+	if _, err := findTailscale(); err != nil {
+		t.Skip("tailscale CLI not installed")
+	}
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte(statusJSON), nil
+	}
+	name, err := MagicDNSName(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "box.tail1234.ts.net" {
+		t.Errorf("MagicDNSName = %q, want box.tail1234.ts.net", name)
+	}
+}
+
+func TestMagicDNSNameErrorsWithoutName(t *testing.T) {
+	if _, err := findTailscale(); err != nil {
+		t.Skip("tailscale CLI not installed")
+	}
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte(`{"Self":{"DNSName":""},"CertDomains":[]}`), nil
+	}
+	if _, err := MagicDNSName(context.Background(), run); err == nil {
+		t.Error("empty DNSName must error")
+	}
+}
+
 func TestFileAdapter(t *testing.T) {
 	dir := t.TempDir()
 	pemOut := selfSigned(t, "agy.example.com", time.Now().Add(time.Hour))

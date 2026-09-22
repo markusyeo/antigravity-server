@@ -59,6 +59,10 @@ type runner struct {
 	// set, is the name the certificate is valid for and so the one to advertise.
 	front *tlsfront.Front
 
+	// tailscaleName is this node's MagicDNS name, empty when not on a tailnet. It
+	// is the stable hostname the control panel advertises in place of a 100.x IP.
+	tailscaleName string
+
 	// accessLogPath is where request lines go, empty when off.
 	accessLogPath string
 
@@ -158,6 +162,8 @@ func (r *runner) start() error {
 			step("Serving HTTPS with the certificate from %s", r.cfg.TLSCert)
 		}
 	}
+
+	r.tailscaleName = r.resolveTailscaleName()
 
 	publicListener, err := listen(r.cfg.BindAddr, r.cfg.Port)
 	if err != nil {
@@ -493,8 +499,8 @@ func (r *runner) endpoints(port int) []ui.Endpoint {
 	}
 	if local.Tailscale != "" {
 		host := local.Tailscale
-		if r.front != nil && r.front.Host != "" {
-			host = r.front.Host
+		if r.tailscaleName != "" {
+			host = r.tailscaleName
 		}
 		out = append(out, ui.Endpoint{Label: "Tailscale", URL: r.url(host, port)})
 	}
@@ -537,10 +543,30 @@ func (r *runner) loginBaseURL(port int) string {
 		return strings.TrimRight(r.cfg.PublicURL, "/")
 	}
 	host := netinfo.Local().Primary()
-	if r.front != nil && r.front.Host != "" {
-		host = r.front.Host
+	if r.tailscaleName != "" {
+		host = r.tailscaleName
 	}
 	return r.url(host, port)
+}
+
+// resolveTailscaleName finds this node's MagicDNS name so the control panel can
+// advertise a stable hostname instead of a 100.x address, whether or not TLS is
+// on. It returns "" when the host is not on a tailnet or tailscaled cannot be
+// reached, since the name is only a convenience.
+func (r *runner) resolveTailscaleName() string {
+	if r.front != nil && r.front.Host != "" {
+		return r.front.Host // the certificate already pins the MagicDNS name
+	}
+	if netinfo.Local().Tailscale == "" {
+		return "" // no tailnet interface, so nothing to ask tailscaled about
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	name, err := tlsfront.MagicDNSName(ctx, nil)
+	if err != nil {
+		return ""
+	}
+	return name
 }
 
 func (r *runner) setGeneratedPassword(password string) {

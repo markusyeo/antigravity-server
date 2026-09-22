@@ -244,21 +244,57 @@ func findTailscale() (string, error) {
 	return "", errors.New("tailscale CLI not found; install Tailscale or use --tls file")
 }
 
+// MagicDNSName returns this node's fully-qualified MagicDNS name without the
+// trailing dot, asking the local tailscaled. It lets callers advertise a stable
+// hostname even when TLS is off, so it stands apart from certificate issuance.
+// Pass a nil run to shell out to the tailscale CLI.
+func MagicDNSName(ctx context.Context, run RunFunc) (string, error) {
+	if run == nil {
+		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).Output()
+		}
+	}
+	binary, err := findTailscale()
+	if err != nil {
+		return "", err
+	}
+	status, err := nodeStatus(ctx, run, binary)
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSuffix(status.Self.DNSName, ".")
+	if name == "" {
+		return "", errors.New("tailscale reported no MagicDNS name; enable MagicDNS under DNS in the Tailscale admin console")
+	}
+	return name, nil
+}
+
+// nodeStatusJSON is the slice of `tailscale status --json` this package reads.
+type nodeStatusJSON struct {
+	CertDomains []string `json:"CertDomains"`
+	Self        struct {
+		DNSName string `json:"DNSName"`
+	} `json:"Self"`
+}
+
+func nodeStatus(ctx context.Context, run RunFunc, binary string) (nodeStatusJSON, error) {
+	out, err := run(ctx, binary, "status", "--json")
+	if err != nil {
+		return nodeStatusJSON{}, fmt.Errorf("tailscale status: %w (is Tailscale running and signed in?)", err)
+	}
+	var status nodeStatusJSON
+	if err := json.Unmarshal(out, &status); err != nil {
+		return nodeStatusJSON{}, fmt.Errorf("parse tailscale status: %w", err)
+	}
+	return status, nil
+}
+
 // certDomain asks tailscaled which names it can issue for. The list is empty
 // until HTTPS certificates are switched on in the tailnet's DNS settings.
 func certDomain(ctx context.Context, run RunFunc, binary string) (string, error) {
-	out, err := run(ctx, binary, "status", "--json")
+	status, err := nodeStatus(ctx, run, binary)
 	if err != nil {
-		return "", fmt.Errorf("tailscale status: %w (is Tailscale running and signed in?)", err)
-	}
-	var status struct {
-		CertDomains []string `json:"CertDomains"`
-		Self        struct {
-			DNSName string `json:"DNSName"`
-		} `json:"Self"`
-	}
-	if err := json.Unmarshal(out, &status); err != nil {
-		return "", fmt.Errorf("parse tailscale status: %w", err)
+		return "", err
 	}
 	if len(status.CertDomains) == 0 {
 		name := strings.TrimSuffix(status.Self.DNSName, ".")
