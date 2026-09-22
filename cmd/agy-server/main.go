@@ -33,10 +33,14 @@ Flags:
   --session-days N          How long a signed-in device stays signed in (default 30)
   --no-mobile-patches       Serve the UI unmodified
   --disable-patch ID        Turn off one patch, repeatable (see agy-server doctor)
+  --tls MODE                Serve HTTPS so browsers use HTTP/2: tailscale, file or off
+  --tls-cert PATH           Certificate for --tls file (with --tls-key)
+  --tls-key PATH            Private key for --tls file
 
 Environment:
   AGY_PASSWORD, AGY_PORT, AGY_BIND, AGY_PUBLIC_URL, AGY_WORKSPACE_ROOT,
-  AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME
+  AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME,
+  AGY_TLS, AGY_TLS_CERT, AGY_TLS_KEY
 
 Docs: https://github.com/AFSlayer/antigravity-server
 `
@@ -108,6 +112,9 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	trustedProxies := fs.String("trusted-proxies", strings.Join(cfg.TrustedProxies, ","), "")
 	sessionDays := fs.Int("session-days", cfg.SessionDays, "")
 	noMobile := fs.Bool("no-mobile-patches", !cfg.MobileUX, "")
+	tlsMode := fs.String("tls", cfg.TLS, "")
+	tlsCert := fs.String("tls-cert", cfg.TLSCert, "")
+	tlsKey := fs.String("tls-key", cfg.TLSKey, "")
 	disabled := &repeatedFlag{values: cfg.DisabledPatches}
 	fs.Var(disabled, "disable-patch", "")
 
@@ -124,6 +131,12 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	cfg.MobileUX = !*noMobile
 	cfg.TrustedProxies = splitCSV(*trustedProxies)
 	cfg.DisabledPatches = disabled.values
+	cfg.TLS = *tlsMode
+	cfg.TLSCert = *tlsCert
+	cfg.TLSKey = *tlsKey
+	if cfg.TLS == "" && (cfg.TLSCert != "" || cfg.TLSKey != "") {
+		cfg.TLS = "file"
+	}
 
 	if mode == modeServe && len(cfg.TrustedProxies) == 0 && cfg.PublicURL != "" {
 		cfg.TrustedProxies = []string{"127.0.0.1/32", "::1/128"}

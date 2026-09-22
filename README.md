@@ -161,6 +161,26 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
 
+### Tailscale, LAN and localhost: turn on HTTPS for HTTP/2
+
+Browsers open at most six connections to a plain-HTTP host, and the Antigravity UI holds six long-lived streams per open conversation. Over plain HTTP every other request then waits in the browser until a stream drops, which shows up as threads that take 20 seconds or more to open even though the server answered in milliseconds. HTTP/2 multiplexes everything over one connection, and browsers only negotiate it over TLS.
+
+`agy-server` can terminate TLS itself with a certificate issued by your Tailscale node:
+
+```bash
+agy-server --tls tailscale            # or: agy-server config --tls tailscale
+```
+
+This needs **MagicDNS** and **HTTPS Certificates** enabled under DNS in the Tailscale admin console. The certificate is valid for your node's MagicDNS name, so open `https://<machine>.<tailnet>.ts.net:8765`, not the `100.x` address. The certificate is cached in the data directory and renewed automatically.
+
+With your own certificate, for a LAN name or `localhost`:
+
+```bash
+agy-server --tls file --tls-cert cert.pem --tls-key key.pem
+```
+
+If you would rather keep `agy-server` on plain HTTP, `tailscale serve --bg 8765` in front of it gives the same HTTPS and HTTP/2 on the Tailscale address only.
+
 ### Caddy
 ```caddyfile
 agy.example.com {
