@@ -109,10 +109,21 @@ func get(t *testing.T, base, path, accept string) *http.Response {
 	return resp
 }
 
+// body returns the response body, transparently gunzipping what the proxy
+// re-encoded. get sets Accept-Encoding explicitly, which turns off the Go
+// client's own transparent decompression.
 func body(t *testing.T, resp *http.Response) string {
 	t.Helper()
 
-	data, err := io.ReadAll(resp.Body)
+	var r io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gz, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r = gz
+	}
+	data, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
 	}
