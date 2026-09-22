@@ -61,8 +61,11 @@ func acceptsGzip(r *http.Request) bool {
 	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
 		enc := strings.TrimSpace(part)
 		if i := strings.IndexByte(enc, ';'); i >= 0 {
-			if strings.Contains(enc[i:], "q=0") && !strings.Contains(enc[i:], "q=0.") {
-				continue
+			param := strings.TrimSpace(enc[i+1:])
+			if strings.HasPrefix(param, "q=") {
+				if q, err := strconv.ParseFloat(strings.TrimSpace(param[2:]), 64); err == nil && q == 0 {
+					continue
+				}
 			}
 			enc = strings.TrimSpace(enc[:i])
 		}
@@ -103,7 +106,7 @@ func (g *gzipResponseWriter) decide(status int) {
 	g.decided = true
 
 	h := g.Header()
-	if status < 200 || status >= 300 || status == http.StatusNoContent {
+	if status < 200 || status >= 300 || status == http.StatusNoContent || status == http.StatusPartialContent {
 		return
 	}
 	if h.Get("Content-Encoding") != "" || !compressible(h.Get("Content-Type")) {

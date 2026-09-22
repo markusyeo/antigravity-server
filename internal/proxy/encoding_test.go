@@ -220,6 +220,10 @@ func TestAcceptsGzip(t *testing.T) {
 		"br;q=1.0, gzip;q=0.8":    true,
 		"identity":                false,
 		"gzip;q=0":                false,
+		"gzip;q=0.0":              false,
+		"gzip;q=0.000":            false,
+		"gzip; q=0.0":             false,
+		"gzip;q=0.001":            true,
 		"*":                       true,
 		"deflate":                 false,
 	}
@@ -231,5 +235,37 @@ func TestAcceptsGzip(t *testing.T) {
 		if got := acceptsGzip(r); got != want {
 			t.Errorf("acceptsGzip(%q) = %v, want %v", hdr, got, want)
 		}
+	}
+}
+
+func TestProxyPartialContentStaysIdentity(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/range.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Content-Range", "bytes 0-1023/50000")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(make([]byte, 1024))
+	})
+	server := httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	front, _ := newTestProxy(t, server)
+
+	req, _ := http.NewRequest(http.MethodGet, front.URL+"/range.js", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Range", "bytes=0-1023")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("want 206 Partial Content, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "" {
+		t.Errorf("206 Partial Content must stay identity, got Content-Encoding %q", got)
+	}
+	if got := resp.Header.Get("Content-Range"); got != "bytes 0-1023/50000" {
+		t.Errorf("want Content-Range preserved, got %q", got)
 	}
 }
