@@ -161,6 +161,17 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
 
+### Access log
+
+To see what a slow page is doing, write one line per request with its status, duration, bytes, and how many requests were in flight when it started:
+
+```bash
+agy-server --access-log ~/agy-access.log
+tail -f ~/agy-access.log
+```
+
+Requests still open after five seconds are logged once as `OPEN`; on plain HTTP, six of those is the browser's connection budget gone. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
+
 ### Caddy
 ```caddyfile
 agy.example.com {

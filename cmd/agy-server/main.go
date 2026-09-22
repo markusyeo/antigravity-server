@@ -33,10 +33,12 @@ Flags:
   --session-days N          How long a signed-in device stays signed in (default 30)
   --no-mobile-patches       Serve the UI unmodified
   --disable-patch ID        Turn off one patch, repeatable (see agy-server doctor)
+  --access-log PATH         One line per request: status, duration, bytes, in-flight count
 
 Environment:
   AGY_PASSWORD, AGY_PORT, AGY_BIND, AGY_PUBLIC_URL, AGY_WORKSPACE_ROOT,
-  AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME
+  AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME,
+  AGY_ACCESS_LOG
 
 Docs: https://github.com/AFSlayer/antigravity-server
 `
@@ -108,6 +110,7 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	trustedProxies := fs.String("trusted-proxies", strings.Join(cfg.TrustedProxies, ","), "")
 	sessionDays := fs.Int("session-days", cfg.SessionDays, "")
 	noMobile := fs.Bool("no-mobile-patches", !cfg.MobileUX, "")
+	accessLog := fs.String("access-log", cfg.AccessLog, "")
 	disabled := &repeatedFlag{values: cfg.DisabledPatches}
 	fs.Var(disabled, "disable-patch", "")
 
@@ -124,6 +127,7 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	cfg.MobileUX = !*noMobile
 	cfg.TrustedProxies = splitCSV(*trustedProxies)
 	cfg.DisabledPatches = disabled.values
+	cfg.AccessLog = *accessLog
 
 	if mode == modeServe && len(cfg.TrustedProxies) == 0 && cfg.PublicURL != "" {
 		cfg.TrustedProxies = []string{"127.0.0.1/32", "::1/128"}
