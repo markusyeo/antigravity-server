@@ -161,6 +161,8 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
 
+`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
+
 ### Caddy
 ```caddyfile
 agy.example.com {
