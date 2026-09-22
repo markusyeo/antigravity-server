@@ -85,14 +85,18 @@ type source interface {
 	getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error)
 }
 
+func defaultRun(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.Output()
+	if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+	}
+	return out, err
+}
+
 // Load resolves the adapter for opts.Mode. It returns nil for Off so callers
 // can keep a single code path: a nil *Front means serve plain HTTP.
 func Load(ctx context.Context, opts Options) (*Front, error) {
-	if opts.Run == nil {
-		opts.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, name, args...).Output()
-		}
-	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -191,9 +195,16 @@ type tailscaleSource struct {
 }
 
 func loadTailscale(ctx context.Context, opts Options) (*Front, error) {
-	binary, err := findTailscale()
-	if err != nil {
-		return nil, err
+	var binary string
+	var err error
+	if opts.Run == nil {
+		opts.Run = defaultRun
+		binary, err = findTailscale()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		binary = "tailscale"
 	}
 
 	domain, err := certDomain(ctx, opts.Run, binary)
@@ -230,8 +241,9 @@ func findTailscale() (string, error) {
 	}
 	candidates := []string{
 		"/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-		"/usr/bin/tailscale",
+		"/opt/homebrew/bin/tailscale",
 		"/usr/local/bin/tailscale",
+		"/usr/bin/tailscale",
 	}
 	if runtime.GOOS == "windows" {
 		candidates = []string{`C:\Program Files\Tailscale\tailscale.exe`}
@@ -249,14 +261,16 @@ func findTailscale() (string, error) {
 // hostname even when TLS is off, so it stands apart from certificate issuance.
 // Pass a nil run to shell out to the tailscale CLI.
 func MagicDNSName(ctx context.Context, run RunFunc) (string, error) {
+	var binary string
+	var err error
 	if run == nil {
-		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, name, args...).Output()
+		run = defaultRun
+		binary, err = findTailscale()
+		if err != nil {
+			return "", err
 		}
-	}
-	binary, err := findTailscale()
-	if err != nil {
-		return "", err
+	} else {
+		binary = "tailscale"
 	}
 	status, err := nodeStatus(ctx, run, binary)
 	if err != nil {

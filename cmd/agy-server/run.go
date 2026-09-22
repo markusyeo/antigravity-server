@@ -477,10 +477,14 @@ func (r *runner) endpoints(port int) []ui.Endpoint {
 	local := netinfo.Local()
 	var out []ui.Endpoint
 
-	if local.LAN != "" {
+	// When Tailscale TLS is active, the certificate is issued only for the
+	// MagicDNS hostname (r.front.Host). Connecting via raw LAN IP over HTTPS
+	// triggers certificate validation failures in browsers, so advertise the LAN
+	// endpoint only when not using Tailscale TLS.
+	if local.LAN != "" && (r.front == nil || r.front.Host == "") {
 		out = append(out, ui.Endpoint{Label: "Same network", URL: r.url(local.LAN, port)})
 	}
-	if local.Tailscale != "" {
+	if local.Tailscale != "" || (r.front != nil && r.front.Host != "") {
 		host := local.Tailscale
 		if r.tailscaleName != "" {
 			host = r.tailscaleName
