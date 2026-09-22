@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -191,12 +192,23 @@ func (c *checklist) checkPatches(cfg *config.Config, instance *lsproc.Instance) 
 	}
 }
 
+// alreadyServing probes the login page over plain HTTP and, failing that, over
+// HTTPS, since a server started with --tls answers only the latter.
 func alreadyServing(port int) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, auth.LoginPath))
-	if err != nil {
-		return false
+	if err != nil || resp.StatusCode == http.StatusBadRequest {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		tlsClient := &http.Client{
+			Timeout:   2 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		}
+		if resp, err = tlsClient.Get(fmt.Sprintf("https://127.0.0.1:%d%s", port, auth.LoginPath)); err != nil {
+			return false
+		}
 	}
 	defer resp.Body.Close()
 
