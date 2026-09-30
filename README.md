@@ -168,6 +168,10 @@ Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked st
 
 `agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
 
+Long conversations initially load the latest 15 steps instead of 50. Scroll upward to fetch older history through Antigravity's native pagination. To restore the original first page, use `--disable-patch conversation-initial-page`.
+
+With a local Antigravity instance running, compare initial stream frames and verify scrollback with `go run ./scripts/benchmark-conversation-load.go`. This measures stream transfer, not browser paint time.
+
 ### Tailscale, LAN and localhost: turn on HTTPS for HTTP/2
 
 Browsers open at most six connections to a plain-HTTP host, and the Antigravity UI holds six long-lived streams per open conversation. Over plain HTTP every other request then waits in the browser until a stream drops, which shows up as threads that take 20 seconds or more to open even though the server answered in milliseconds. HTTP/2 multiplexes everything over one connection, and browsers only negotiate it over TLS.

@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+func logContents(l *Logger, buf *bytes.Buffer) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return buf.String()
+}
+
 func TestLogsOneLinePerRequest(t *testing.T) {
 	var buf bytes.Buffer
 	l := New(&buf)
@@ -29,7 +35,7 @@ func TestLogsOneLinePerRequest(t *testing.T) {
 	_, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	line := buf.String()
+	line := logContents(l, &buf)
 	for _, want := range []string{" 201 ", "5B", "POST", "GetAllWorkflows", "inflight=1", "HTTP/1.1"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("log line %q missing %q", line, want)
@@ -51,7 +57,6 @@ func TestReportsLongLivedStreamsWhileOpen(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	releaseOnce := func() { once.Do(func() { close(release) }) }
-	t.Cleanup(releaseOnce)
 	h := l.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/connect+json")
 		w.WriteHeader(http.StatusOK)
@@ -60,6 +65,7 @@ func TestReportsLongLivedStreamsWhileOpen(t *testing.T) {
 	}))
 	server := httptest.NewServer(h)
 	t.Cleanup(server.Close)
+	t.Cleanup(releaseOnce)
 
 	resp, err := http.Post(server.URL+"/exa.language_server_pb.LanguageServerService/StreamAgentStateUpdates", "application/connect+json", strings.NewReader("{}"))
 	if err != nil {
@@ -67,22 +73,22 @@ func TestReportsLongLivedStreamsWhileOpen(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(buf.String(), "OPEN") && time.Now().Before(deadline) {
+	for !strings.Contains(logContents(l, &buf), "OPEN") && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !strings.Contains(buf.String(), "OPEN") || !strings.Contains(buf.String(), "StreamAgentStateUpdates") {
-		t.Fatalf("stream was not reported while open: %q", buf.String())
+	if !strings.Contains(logContents(l, &buf), "OPEN") || !strings.Contains(logContents(l, &buf), "StreamAgentStateUpdates") {
+		t.Fatalf("stream was not reported while open: %q", logContents(l, &buf))
 	}
 
 	releaseOnce()
 	_, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	deadline = time.Now().Add(2 * time.Second)
-	for strings.Count(buf.String(), "\n") < 2 && time.Now().Before(deadline) {
+	for strings.Count(logContents(l, &buf), "\n") < 2 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !strings.Contains(buf.String(), " 200 ") {
-		t.Errorf("want a completion line after the stream closed: %q", buf.String())
+	if !strings.Contains(logContents(l, &buf), " 200 ") {
+		t.Errorf("want a completion line after the stream closed: %q", logContents(l, &buf))
 	}
 }
 
@@ -120,8 +126,8 @@ func TestInflightCountsConcurrentRequests(t *testing.T) {
 	close(release)
 	<-held
 
-	if !strings.Contains(buf.String(), "/quick") || !strings.Contains(buf.String(), "inflight=2") {
-		t.Errorf("quick request should see the held one in flight: %q", buf.String())
+	if !strings.Contains(logContents(l, &buf), "/quick") || !strings.Contains(logContents(l, &buf), "inflight=2") {
+		t.Errorf("quick request should see the held one in flight: %q", logContents(l, &buf))
 	}
 }
 
