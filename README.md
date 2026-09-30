@@ -171,6 +171,7 @@ tail -f ~/agy-access.log
 ```
 
 Requests still open after five seconds are logged once as `OPEN`; on plain HTTP, six of those is the browser's connection budget gone. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
+`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
 
 ### Caddy
 ```caddyfile
