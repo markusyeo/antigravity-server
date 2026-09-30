@@ -180,6 +180,7 @@ agy-server --tls file --tls-cert cert.pem --tls-key key.pem
 ```
 
 If you would rather keep `agy-server` on plain HTTP, `tailscale serve --bg 8765` in front of it gives the same HTTPS and HTTP/2 on the Tailscale address only.
+`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
 
 ### Caddy
 ```caddyfile
