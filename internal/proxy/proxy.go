@@ -2,9 +2,9 @@
 // bundle on the way back.
 //
 // Streaming matters here: agent responses arrive as long-lived chunked bodies, so
-// the proxy flushes immediately and never buffers. Compression is only declined
-// for the two documents that get patched, leaving every other asset to pass
-// through untouched.
+// the proxy flushes immediately and never buffers. Upstream compression is only
+// declined for the two documents that get patched; whatever comes back as
+// identity, patched or streamed, is gzipped on the way out (see encoding.go).
 package proxy
 
 import (
@@ -36,7 +36,7 @@ type Options struct {
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
-	handler  *httputil.ReverseProxy
+	handler  http.Handler
 	opts     Options
 	reported sync.Map
 }
@@ -79,7 +79,7 @@ func New(opts Options) (*Proxy, error) {
 	rp.ModifyResponse = p.modifyResponse
 	rp.ErrorHandler = errorHandler
 
-	p.handler = rp
+	p.handler = gzipHandler(rp)
 	return p, nil
 }
 
