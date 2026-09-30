@@ -11,8 +11,27 @@ func TestHistoryProviderLifecycle(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required to execute the history provider")
 	}
-	if out, err := exec.Command("node", "--test", "history_test.cjs").CombinedOutput(); err != nil {
+	if out, err := exec.Command("node", "--test", "history_test.cjs", "load_debug_test.cjs").CombinedOutput(); err != nil {
 		t.Fatalf("history provider lifecycle: %v\n%s", err, out)
+	}
+}
+
+func TestConversationLoadDebugIsOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts Options
+		want bool
+	}{
+		{"normal", Options{}, false},
+		{"debug", Options{Debug: true}, true},
+		{"history helper disabled", Options{Debug: true, Disabled: map[string]bool{"conversation-history-status": true}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := Apply(HTML, []byte("<head></head>"), tc.opts)
+			if got := strings.Contains(string(body), `id="agy-load-debug"`); got != tc.want {
+				t.Errorf("load debug injected=%v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

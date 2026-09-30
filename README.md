@@ -203,6 +203,8 @@ tail -f ~/agy-access.log
 
 Requests still open after five seconds are logged once as `OPEN`; on plain HTTP, six of those is the browser's connection budget gone. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
 
+`AGY_DEBUG=1` also records conversation stream and message paint timings in `mobile-debug.log`. The trace distinguishes waiting for the stream from waiting for messages to render and records no message contents. To measure loading without the keyboard geometry tracer, add `--disable-patch mobile-debug`.
+
 
 ### Caddy
 ```caddyfile

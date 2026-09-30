@@ -36,6 +36,13 @@ var historyManualAnchorRe = regexp.MustCompile(
 //go:embed history.js
 var historyJavaScript string
 
+//go:embed load_debug.js
+var loadDebugJavaScript string
+
+func loadDebugScript(Options) string {
+	return `<script id="agy-load-debug">` + loadDebugJavaScript + `</script>`
+}
+
 func historyScript(Options) string {
 	return `<style>
 .agy-history-status { position:sticky; top:8px; z-index:20; height:0; width:max-content; max-width:calc(100% - 32px); margin:0 auto; pointer-events:none; color:var(--foreground); font:inherit; font-size:12px; }

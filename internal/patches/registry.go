@@ -120,6 +120,14 @@ func All() []Patch {
 			FindRe:  initialConversationPageRe,
 			Replace: `${1}{startIndex:-15}${2}`,
 		},
+		{
+			ID:        "conversation-load-debug",
+			Desc:      "Trace conversation stream and message paint timing to the local debug log",
+			Target:    HTML,
+			Kind:      InjectHead,
+			Enabled:   func(o Options) bool { return o.Debug && !o.Disabled["conversation-history-status"] },
+			ReplaceFn: loadDebugScript,
+		},
 		// Without this the phone's browser would call https://127.0.0.1:<port>,
 		// which resolves to the phone itself. Nothing works until it is fixed.
 		{
