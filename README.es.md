@@ -40,6 +40,7 @@ Ambos no son excluyentes. `agy-server` solo activa el mismo ajuste `remoteContro
 | **Subida de archivos** | Límite de 1MB por RPC de texto | **Subida por fragmentos** para logs, HARs y datasets grandes |
 | **Ruta de conexión** | Retransmitida por los servidores de Google | **Directa** — tu propio dominio, LAN o VPN |
 | **Reconexión tras reinicio** | El reinicio del servidor invalida el token CSRF, requiriendo recargar la página manualmente | **Reconexión automática sin recarga** — Token CSRF persistente y traducción gRPC status 14 restauran la sesión automáticamente |
+| **Mantenimiento de memoria** | La memoria se acumula indefinidamente (~4GB+) en sesiones largas | **Reinicio diario en inactividad** — Reinicia el servidor en periodos de inactividad sin interrumpir el trabajo activo |
 | **Acceso sin cuenta de Google** | Imposible — la cuenta es la puerta | Tu propia contraseña (PBKDF2), sesiones y límite de intentos |
 
 ---
@@ -109,6 +110,7 @@ Antigravity Server soporta el estándar Progressive Web App (PWA). Al añadirlo 
 - **Controles Táctiles**: Botones Deshacer (`↶`) y Copiar (`📋`) permanentemente visibles.
 - **Gestión Completa de Chats**: Elimina conversaciones desde la barra superior y fija o archiva desde el menú desplegable.
 - **Seguimiento Preciso de Teclado**: Fija la barra de navegación superior, colapsa el Safe Area a 0px y adapta la altura de la conversación.
+- **Anclaje de Desplazamiento y Protección Superior**: Evita tormentas de peticiones infinitas al subir para ver mensajes antiguos en chats largos y preserva la posición del scroll.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="La interfaz web móvil con parches, en un navegador de móvil" />
@@ -134,10 +136,11 @@ Disfruta de una experiencia fluida tanto en móviles como en navegadores de sobr
 
 ---
 
-### 🔄 Actualizaciones Automáticas sin Caídas
+### 🔄 Actualizaciones Automáticas sin Caídas y Mantenimiento Diario de Memoria
 En servidores Linux headless, `agy-server` incluye un servicio de actualización automática:
 - Comprueba diariamente las nuevas versiones oficiales de `language_server`.
 - Reemplaza el binario de forma atómica sin interrumpir el servicio.
+- **Reinicio diario en inactividad (Daily Idle Restart)**: Cuando está actualizado, reinicia periódicamente `language_server` durante periodos de inactividad (cero streams activos y más de 15 minutos sin tráfico) para recuperar la memoria acumulada. Si se detecta uso activo, el reinicio se pospone de forma segura cada 10 minutos.
 - Comprobación manual: ejecuta `agy-server update`.
 
 ---
@@ -146,6 +149,8 @@ En servidores Linux headless, `agy-server` incluye un servicio de actualización
 Cuando el servidor de lenguaje se reinicia (por actualizaciones o reinicios de servicio) o la conexión cae brevemente:
 - **Token CSRF Persistente**: Mantiene el mismo token de autenticación tras los reinicios, evitando el rechazo de sesiones activas.
 - **Traducción de Protocolo gRPC-Web**: Traduce las caídas temporales a `grpc-status: 14` (Unavailable) en lugar de un error HTTP 502 HTML, permitiendo que el flujo de estado nativo de Antigravity se reconecte automáticamente en segundos sin recargar la pestaña del navegador.
+- **Cierre Automático de Banners de Desconexión**: Oculta automáticamente el aviso "Lost connection" tan pronto como se verifica que la comunicación con el servidor está restablecida.
+- **Guardián contra Bloqueo del Spinner**: Detecta si WebKit móvil se queda colgado en un flujo HTTP/2 multiplexado y recupera la conexión tras 30 segundos con red inactiva, evitando spinners infinitos sin interrumpir descargas pesadas.
 
 ---
 
@@ -201,6 +206,26 @@ server {
 
 > [!IMPORTANT]
 > Configura `--trusted-proxies 127.0.0.1/32` (o la variable `AGY_TRUSTED_PROXIES=127.0.0.1/32`) para que la protección contra fuerza bruta identifique la IP real del cliente.
+
+---
+
+## Parches de Experiencia Móvil (UX)
+
+El paquete web servido por Antigravity —ya sea a través del puente remoto oficial o mediante `agy-server`— está diseñado exclusivamente para escritorio. `agy-server` lo reescribe dinámicamente al vuelo. El registro en [`internal/patches/registry.go`](internal/patches/registry.go) incluye 45 parches, 25 de ellos específicos para pantallas táctiles y el resto dedicados a cargas, navegación, inicio de sesión e invalidación de caché. Ejemplos destacados:
+
+| Categoría | Comportamiento del Paquete de Escritorio | Parche de agy-server |
+| :--- | :--- | :--- |
+| **Navegación** | Botón de nuevo proyecto `(+)` omitido en pantallas móviles | Restaura el botón `(+)` Nueva Conversación junto a cada proyecto |
+| **Gestión de Conversaciones** | Sin opciones de eliminar, fijar o archivar en táctil | Añade Eliminar, Fijar y Archivar al menú kebab `⋮` y a la barra de título |
+| **Acciones de Mensaje** | Botones de deshacer y copiar ocultos tras estados hover | Muestra permanentemente los botones Deshacer (`↶`) 및 Copiar (`📋`) en táctil |
+| **Teclado Virtual y Desplazamiento** | Rebote de viewport y espacios en blanco en iOS Safari; desplazamiento superior en chats largos dispara tormentas de peticiones | Seguimiento dinámico de visualViewport, colapso de Safe Area a 0px, fijación de layout, anclaje de desplazamiento CSS y guardián contra tormentas de peticiones |
+| **Carga de Archivos** | Límite RPC de 1MB falla con logs o datasets grandes | Transmite archivos asíncronamente al disco mediante endpoint de streaming por fragmentos |
+| **Respuesta Táctil** | Retardo de pulsación de 300ms y zoom por doble toque | Configura `touch-action: manipulation` para una respuesta táctil instantánea |
+| **Estabilidad de Conexión** | Banner "Lost connection" visible tras reconexión exitosa; WebKit móvil se cuelga en flujos HTTP/2 | Oculta automáticamente avisos obsoletos de desconexión tras verificar conectividad y recupera spinners bloqueados (>30s con red inactiva) mediante guardián |
+| **Entrada de Texto** | Enter en móvil envía mensaje o rompe composición IME; navegación por teclado salta al inicio con comandos slash | Mantiene salto de línea nativo, protege composición IME, restaura navegación al inicio de línea (Cmd+Izquierda / Inicio) y por palabras (Ctrl+Izquierda), envía con Cmd/Ctrl+Enter |
+| **Selección de Modelo** | Tocar un modelo cierra el menú inmediatamente | Abre correctamente el submenú de nivel de razonamiento (reasoning effort) |
+
+Ejecute `agy-server doctor` para verificar la integridad de todos los parches aplicados a su instalación.
 
 ---
 

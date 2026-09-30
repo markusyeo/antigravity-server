@@ -55,10 +55,11 @@ var (
 
 	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
-	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}`)
+	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\("",a\)!==void 0\})`)
 
 	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",Error\("Text file size exceeds 1MB limit"\)\);)`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
+	initialConversationPageRe             = regexp.MustCompile(`(initialStepsSlice:[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.SliceSchema,)[a-zA-Z0-9_$]+(\),initialGeneratorMetadatasSlice:)`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
 	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
 	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
@@ -72,6 +73,14 @@ func mobile(o Options) bool { return o.MobileUX }
 // all derive from this list.
 func All() []Patch {
 	return []Patch{
+		{
+			ID:      "conversation-initial-page",
+			Desc:    "Load the latest 15 conversation steps first, fetching older history on scroll",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  initialConversationPageRe,
+			Replace: `${1}{startIndex:-15}${2}`,
+		},
 		// Without this the phone's browser would call https://127.0.0.1:<port>,
 		// which resolves to the phone itself. Nothing works until it is fixed.
 		{
@@ -413,6 +422,13 @@ func All() []Patch {
 			Replace: lineStartNavScript,
 		},
 		{
+			ID:      "connection-watchdog",
+			Desc:    "Auto-dismiss stale connection banners once reconnected and recover from stuck loading spinners",
+			Target:  HTML,
+			Kind:    InjectHead,
+			Replace: connectionWatchdogScript,
+		},
+		{
 			ID:      "composer-upload-menu-item",
 			Desc:    "Add Upload File menu item to the composer plus menu",
 			Target:  MainJS,
@@ -442,7 +458,7 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadCustomTextTypesRe,
-			Replace: `function $1(a,b){b=b.split(";")[0].trim().toLowerCase();if($2.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return $3[a]||(b.startsWith("image/")||b.startsWith("video/")||b==="application/pdf"?void 0:a==="har"||a==="jsonl"?"application/json":"text/plain")}`,
+			Replace: `function $1(a,b){b=b.split(";")[0].trim().toLowerCase();if($2.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return $3[a]||(b.startsWith("image/")||b.startsWith("video/")||b==="application/pdf"?void 0:a==="har"||a==="jsonl"?"application/json":"text/plain")}$4`,
 		},
 		{
 			ID:      "file-upload-large-file-streaming-fallback",
@@ -741,6 +757,7 @@ div.user-input-buttons-container > * {
     div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"] {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
+      overflow-anchor: auto !important;
     }
 
     /* Dual Mode Overrides: Restore relative flow and viewport bounds when question is active */
@@ -1425,10 +1442,180 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     window.__agyLastCompEnd = performance.now();
   }, true);
 
-  // Observe DOM for question modal or interaction card appearance
+  // Mobile Conversation Top-Scroll Guard & Anchoring
+  // Prevents cascading fetch storm when scrolling to top on mobile and preserves scroll position.
+  var topSentinelLockedUntil = 0;
+  var lastScrollHeight = 0;
+  var lastScrollTop = 0;
+  var initialLoadGuardUntil = performance.now() + 2000;
+  window.__agyInitialLoadUntil = initialLoadGuardUntil;
+  var currentConvoUrl = window.location.pathname;
+  var guardedScroller = null;
+
+  // Intercept and throttle RequestAgentStatePageUpdate to strictly prevent fetch storms
+  if (!window.__agyFetchIntercepted && window.fetch) {
+    window.__agyFetchIntercepted = true;
+    var _origFetch = window.fetch;
+    var _lastPageUpdateReq = 0;
+
+    window.fetch = function (resource, init) {
+      var urlStr = (typeof resource === "string") ? resource : (resource && resource.url) || "";
+      if (urlStr.indexOf("RequestAgentStatePageUpdate") !== -1) {
+        var now = performance.now();
+        // 1. Guard against initial entry fetch storm (first 2 seconds of conversation load)
+        // 2. Minimum 1.5s cooldown between pagination fetches
+        if (now < (window.__agyInitialLoadUntil || 0) || (now - _lastPageUpdateReq < 1500)) {
+          // Return synthetic empty gRPC-Web response to satisfy caller without network storm
+          return Promise.resolve(new Response(new Uint8Array([0, 0, 0, 0, 0]), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/grpc-web+proto",
+              "grpc-status": "0",
+              "grpc-message": ""
+            }
+          }));
+        }
+        _lastPageUpdateReq = now;
+      }
+      return _origFetch.apply(this, arguments);
+    };
+  }
+
+  function getTopSentinel(sc) {
+    if (!sc) return null;
+    return sc.querySelector('div.h-px.w-full[aria-hidden="true"]') ||
+           sc.querySelector('div.h-px.w-full:first-child');
+  }
+
+  function lockTopSentinel(sentinel) {
+    if (!sentinel) return;
+    // CRITICAL: NEVER use display:none! In W3C DOM spec, display:none returns bounding rect {0,0}.
+    // Antigravity virtualization Rqb() calculates: sentinel.bottom > viewport.top - 150 (0 > -102 === true),
+    // which causes endless 100ms fetch storms!
+    // Instead, offset sentinel coordinate to top: -2000px with visibility: hidden.
+    sentinel.style.setProperty("position", "absolute", "important");
+    sentinel.style.setProperty("top", "-2000px", "important");
+    sentinel.style.setProperty("visibility", "hidden", "important");
+    sentinel.style.setProperty("pointer-events", "none", "important");
+    sentinel.style.removeProperty("display");
+  }
+
+  function unlockTopSentinel(sentinel) {
+    if (!sentinel) return;
+    sentinel.style.removeProperty("position");
+    sentinel.style.removeProperty("top");
+    sentinel.style.removeProperty("visibility");
+    sentinel.style.removeProperty("pointer-events");
+    sentinel.style.removeProperty("display");
+  }
+
+  function updateTopScrollGuard() {
+    var sc = chatScroller();
+    if (!sc) return;
+
+    if (window.location.pathname !== currentConvoUrl) {
+      currentConvoUrl = window.location.pathname;
+      initialLoadGuardUntil = performance.now() + 2000;
+      window.__agyInitialLoadUntil = initialLoadGuardUntil;
+      topSentinelLockedUntil = 0;
+      lastScrollHeight = sc.scrollHeight;
+      lastScrollTop = sc.scrollTop;
+    }
+
+    var sentinel = getTopSentinel(sc);
+    if (!sentinel) return;
+
+    var now = performance.now();
+    var shouldLock = (now < initialLoadGuardUntil) || (now < topSentinelLockedUntil);
+
+    if (shouldLock) {
+      lockTopSentinel(sentinel);
+    } else {
+      unlockTopSentinel(sentinel);
+    }
+  }
+
+  function handleScrollerScroll() {
+    var sc = chatScroller();
+    if (!sc) return;
+
+    var curTop = sc.scrollTop;
+
+    // Once user has scrolled down past 50px, unlock the top sentinel
+    if (curTop >= 50 && topSentinelLockedUntil > 0) {
+      topSentinelLockedUntil = 0;
+      var sentinel = getTopSentinel(sc);
+      if (sentinel && performance.now() >= initialLoadGuardUntil) {
+        unlockTopSentinel(sentinel);
+      }
+    }
+
+    lastScrollTop = curTop;
+    lastScrollHeight = sc.scrollHeight;
+  }
+
+  function handleScrollerMutation() {
+    var sc = chatScroller();
+    if (!sc) return;
+
+    var curHeight = sc.scrollHeight;
+    var curTop = sc.scrollTop;
+
+    // Detect prepend: content expanded while at or near top
+    if (lastScrollHeight > 0 && curHeight > lastScrollHeight) {
+      var delta = curHeight - lastScrollHeight;
+      if (lastScrollTop <= 50 && delta >= 30) {
+        // Prepend detected: lock sentinel for 3s to stop cascading fetch storm
+        topSentinelLockedUntil = performance.now() + 3000;
+        var sentinel = getTopSentinel(sc);
+        if (sentinel) {
+          lockTopSentinel(sentinel);
+        }
+
+        // Programmatic scroll position restoration for mobile WebKit
+        var targetTop = lastScrollTop + delta;
+        sc.scrollTop = targetTop;
+        requestAnimationFrame(function () {
+          sc.scrollTop = targetTop;
+        });
+        setTimeout(function () {
+          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+        }, 50);
+        setTimeout(function () {
+          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+        }, 150);
+        setTimeout(function () {
+          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
+        }, 300);
+      }
+    }
+
+    lastScrollHeight = curHeight;
+    lastScrollTop = curTop;
+    updateTopScrollGuard();
+  }
+
+  function attachScrollerGuard() {
+    var sc = chatScroller();
+    if (!sc) return;
+    if (guardedScroller !== sc) {
+      if (guardedScroller) {
+        guardedScroller.removeEventListener("scroll", handleScrollerScroll);
+      }
+      guardedScroller = sc;
+      lastScrollHeight = sc.scrollHeight;
+      lastScrollTop = sc.scrollTop;
+      sc.addEventListener("scroll", handleScrollerScroll, { passive: true });
+    }
+    updateTopScrollGuard();
+  }
+
+  // Observe DOM for question modal or interaction card appearance and scroller updates
   var lastQuestionModalSeen = false;
   var modalObserver = new MutationObserver(function () {
     updateQuestionState();
+    attachScrollerGuard();
+    handleScrollerMutation();
     var hasModal = hasActiveQuestion;
     if (hasModal && !lastQuestionModalSeen) {
       lastQuestionModalSeen = true;
@@ -1440,11 +1627,13 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   if (document.body) {
     modalObserver.observe(document.body, { childList: true, subtree: true });
     updateQuestionState();
+    attachScrollerGuard();
   } else {
     document.addEventListener("DOMContentLoaded", function () {
       if (document.body) {
         modalObserver.observe(document.body, { childList: true, subtree: true });
         updateQuestionState();
+        attachScrollerGuard();
       }
     }, { once: true });
   }
@@ -2088,5 +2277,213 @@ const lineStartNavScript = `<script id="agy-line-start-nav">
       return;
     }
   }, true);
+})();
+</script>`
+
+const connectionWatchdogScript = `<script id="agy-connection-watchdog">
+(function () {
+  var lastPingSuccess = 0;
+  var activePingPromise = null;
+  var MAX_RELOAD_ATTEMPTS = 3;
+  var lastNetworkActivity = Date.now();
+
+  // Track network fetch activity so we never interrupt in-progress downloads of large conversations/summaries
+  if (window.fetch && !window.__agyFetchActivityTracked) {
+    window.__agyFetchActivityTracked = true;
+    var _origFetchForWatchdog = window.fetch;
+    window.fetch = function () {
+      lastNetworkActivity = Date.now();
+      var p = _origFetchForWatchdog.apply(this, arguments);
+      if (p && p.then) {
+        return p.then(function (res) {
+          lastNetworkActivity = Date.now();
+          return res;
+        }, function (err) {
+          lastNetworkActivity = Date.now();
+          throw err;
+        });
+      }
+      return p;
+    };
+  }
+
+  function pingServer(onSuccess, onError, force) {
+    var now = Date.now();
+    if (!force && (now - lastPingSuccess < 3000)) {
+      if (onSuccess) onSuccess();
+      return;
+    }
+
+    if (!activePingPromise) {
+      activePingPromise = fetch("/__agy/api/signin/status", { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          activePingPromise = null;
+          if (data && data.available === false) {
+            throw new Error("Language server unavailable");
+          }
+          lastPingSuccess = Date.now();
+        })
+        .catch(function (err) {
+          activePingPromise = null;
+          throw err;
+        });
+    }
+
+    activePingPromise
+      .then(function () {
+        if (onSuccess) onSuccess();
+      })
+      .catch(function (err) {
+        if (onError) onError(err);
+      });
+  }
+
+  // 1. Auto-dismiss "Lost connection" banner ONLY when server is verified alive
+  function checkAndDismissLostConnectionBanner() {
+    var banners = document.querySelectorAll('div[data-testid="feature-banner"]');
+    if (!banners || banners.length === 0) return;
+
+    banners.forEach(function (b) {
+      var text = (b.textContent || "").toLowerCase();
+      if (text.indexOf("lost connection") !== -1 || text.indexOf("reconnecting") !== -1 || text.indexOf("연결") !== -1) {
+        // Probe server actively; dismiss if OK, restore banner if connection actually down
+        pingServer(function () {
+          if (b.style.display !== "none") {
+            b.style.setProperty("display", "none", "important");
+          }
+        }, function () {
+          if (b.style.display === "none") {
+            b.style.removeProperty("display");
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Watchdog: Recover if conversation loading spinner is stuck > 30s AND network is completely idle (>5s)
+  var stuckTimerStart = 0;
+  var currentPath = window.location.pathname;
+
+  function checkConversationSpinnerStuck() {
+    if (window.location.pathname.indexOf("/c/") !== 0) {
+      stuckTimerStart = 0;
+      return;
+    }
+
+    if (window.location.pathname !== currentPath) {
+      currentPath = window.location.pathname;
+      stuckTimerStart = 0;
+    }
+
+    var convoView = document.querySelector('div[data-testid="conversation-view"]');
+    if (!convoView) {
+      stuckTimerStart = 0;
+      return;
+    }
+
+    var spinner = convoView.querySelector('.animate-spin, [name="progress_activity"]');
+    var hasMessages = convoView.querySelector('.user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
+
+    if (hasMessages) {
+      // Conversation loaded successfully; reset reload retry circuit breaker
+      sessionStorage.removeItem("agy_stuck_reload_count");
+      sessionStorage.removeItem("agy_stuck_reload");
+      stuckTimerStart = 0;
+      return;
+    }
+
+    if (spinner && !hasMessages) {
+      var now = Date.now();
+      // If network communication is actively ongoing (e.g. streaming large conversation/summaries), defer stuck timer
+      if (now - lastNetworkActivity < 5000) {
+        stuckTimerStart = now;
+        return;
+      }
+
+      if (!stuckTimerStart) {
+        stuckTimerStart = now;
+      } else if (now - stuckTimerStart > 30000) {
+        // Guard against losing user draft in composer
+        var composer = document.querySelector('[contenteditable="true"]');
+        if (composer && (composer.textContent || "").trim().length > 0) {
+          return;
+        }
+
+        // Circuit breaker: stop reloading if maximum attempts reached
+        var reloadCount = parseInt(sessionStorage.getItem("agy_stuck_reload_count") || "0", 10);
+        if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+          console.warn("[agy-watchdog] Conversation spinner stuck > 30s, but max reload attempts reached (circuit breaker triggered)");
+          return;
+        }
+
+        var lastReload = parseInt(sessionStorage.getItem("agy_stuck_reload") || "0", 10);
+        if (now - lastReload > 30000) {
+          // Verify server is alive before reloading; never reload into a dead server!
+          pingServer(function () {
+            sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
+            sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
+            console.warn("[agy-watchdog] Conversation spinner stuck > 30s with idle network and live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
+            window.location.reload();
+          });
+        }
+      }
+    } else {
+      stuckTimerStart = 0;
+    }
+  }
+
+  // Debounced DOM observer via requestAnimationFrame to eliminate streaming layout churn
+  var domCheckTimer = null;
+  function scheduleDOMCheck() {
+    if (domCheckTimer) return;
+    domCheckTimer = requestAnimationFrame(function () {
+      domCheckTimer = null;
+      checkAndDismissLostConnectionBanner();
+      checkConversationSpinnerStuck();
+    });
+  }
+
+  var watchdogObserver = new MutationObserver(scheduleDOMCheck);
+
+  function initWatchdog() {
+    if (document.body) {
+      // childList and subtree are sufficient; omit characterData to prevent token streaming jank
+      watchdogObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    setInterval(function () {
+      checkAndDismissLostConnectionBanner();
+      checkConversationSpinnerStuck();
+    }, 1000);
+
+    document.addEventListener("keydown", function (e) {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter") {
+        pingServer(checkAndDismissLostConnectionBanner);
+      }
+    }, true);
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") {
+        stuckTimerStart = 0;
+        pingServer(checkAndDismissLostConnectionBanner);
+      }
+    });
+
+    window.addEventListener("pageshow", function () {
+      stuckTimerStart = 0;
+      pingServer(checkAndDismissLostConnectionBanner);
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initWatchdog);
+  } else {
+    initWatchdog();
+  }
 })();
 </script>`

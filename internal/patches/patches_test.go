@@ -39,6 +39,7 @@ func syntheticBundle() []byte {
 // regexpFixtures supplies a synthetic match for each regexp patch, since a
 // regexp has no literal to reuse.
 var regexpFixtures = map[string]string{
+	"conversation-initial-page":                 `initialStepsSlice:r(ue.SliceSchema,EJa),initialGeneratorMetadatasSlice:`,
 	"skip-onboarding":                           `c.hasOnboardingScreens&&e!==2&&RK({to:"/onboarding",replace:!0,throw:!0})`,
 	"mobile-enter-newline":                      `registerCommand(FE,k=>{if(!k)return!1;k.preventDefault();`,
 	"model-effort-submenu":                      ",onClick:()=>{var y=\nv.byEffort.get(w);y&&b(y)}",
@@ -72,7 +73,7 @@ var regexpFixtures = map[string]string{
 	"composer-upload-menu-item":                 `{icon:ea=>x.createElement(T,{name:"image",size:ea.width?Number(ea.width):14,className:ea.className}),` + "\n" + `label:"Media",onClick:oa}`,
 	"file-upload-accept-all":                    `accept:".png,.jpg,.jpeg,.gif,image/png,image/jpeg,image/gif,video/webm,.mp4,video/mp4,.pdf,application/pdf,.txt,text/plain,.csv,text/csv,.json,application/json,.md,text/markdown,.py,text/x-python,.js,.mjs,text/javascript,.ts,.tsx,text/x-typescript,.html,.htm,text/html,.css,text/css",multiple:!0`,
 	"file-upload-input-reset":                   `var IRa=({onFilesSelected:a})=>{var b=(0,x.useRef)(null),c=(0,x.useCallback)(e=>{e=e.target;e.files&&a(e.files)},[a]);return{openFileDialog:(0,x.useCallback)(()=>{b.current?.click()},[]),fileInputRef:b,handleFileChange:c}};`,
-	"file-upload-custom-text-types":             `function WEa(a,b){b=b.split(";")[0].trim().toLowerCase();if(UEa.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return VEa[a]}`,
+	"file-upload-custom-text-types":             `function WEa(a,b){b=b.split(";")[0].trim().toLowerCase();if(UEa.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return VEa[a]}function acceptsText(a){return WEa("",a)!==void 0}function docMime(a,b){b=b.split(";")[0].trim().toLowerCase();if(docTypes.includes(b))return b;a=a.slice(a.lastIndexOf(".")+1).toLowerCase();return docExtensions[a]}function acceptsDoc(a,b=""){return docMime(b,a)!==void 0}`,
 	"file-upload-large-file-streaming-fallback": `if(n)if(k.size>1048576)console.error("Text file size exceeds 1MB limit");`,
 	"question-modal-write-in-radio":             `value:"__write_in__",checked:e,onChange:()=>{var D=!e;m(D);D&&(a.isMultiSelect||k())}`,
 	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
@@ -310,6 +311,11 @@ func TestHTMLInjection(t *testing.T) {
 		`window.__agyLastCompEnd = performance.now();`,
 		`window.dispatchEvent(new MouseEvent('mouseup'));`,
 		`agy-line-start-nav`,
+		`overflow-anchor: auto !important;`,
+		`updateTopScrollGuard()`,
+		`agy-connection-watchdog`,
+		`checkAndDismissLostConnectionBanner`,
+		`checkConversationSpinnerStuck`,
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
@@ -509,5 +515,83 @@ func TestTextInputFilterLogic(t *testing.T) {
 		if re.MatchString(typ) {
 			t.Errorf("expected %q to be allowed as text input", typ)
 		}
+	}
+}
+
+func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
+	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
+	body := string(out)
+
+	requiredGuards := []string{
+		"activePingPromise",
+		"MAX_RELOAD_ATTEMPTS = 3",
+		`sessionStorage.getItem("agy_stuck_reload_count")`,
+		`sessionStorage.removeItem("agy_stuck_reload_count")`,
+		`sessionStorage.removeItem("agy_stuck_reload")`,
+		`document.querySelector('[contenteditable="true"]')`,
+		`data.available === false`,
+		`now - lastPingSuccess < 3000`,
+		`now - lastNetworkActivity < 5000`,
+		`now - stuckTimerStart > 30000`,
+		`now - lastReload > 30000`,
+		`window.__agyFetchActivityTracked`,
+		`requestAnimationFrame`,
+		`e.isComposing || e.keyCode === 229`,
+		`b.style.removeProperty("display")`,
+	}
+
+	for _, guard := range requiredGuards {
+		if !strings.Contains(body, guard) {
+			t.Errorf("missing watchdog safety guard %q in injected HTML", guard)
+		}
+	}
+
+	// Ensure characterData is omitted from observer options to prevent token streaming jank
+	watchdogRe := regexp.MustCompile(`watchdogObserver\.observe\([^,]+,\s*\{([^}]+)\}\)`)
+	matches := watchdogRe.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		t.Fatalf("failed to locate watchdogObserver.observe in injected script")
+	}
+	if strings.Contains(matches[1], "characterData") {
+		t.Errorf("watchdogObserver should not observe characterData: %s", matches[1])
+	}
+
+	// Verify that window.location.reload() is strictly wrapped inside pingServer callback
+	if !strings.Contains(body, "pingServer(function () {") || !strings.Contains(body, "window.location.reload();") {
+		t.Errorf("window.location.reload() must be protected inside pingServer callback")
+	}
+}
+
+func TestTopSentinelGuardAndFetchInterceptor(t *testing.T) {
+	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
+	body := string(out)
+
+	requiredGuards := []string{
+		"window.__agyFetchIntercepted",
+		"window.__agyInitialLoadUntil",
+		"RequestAgentStatePageUpdate",
+		"lockTopSentinel",
+		"unlockTopSentinel",
+		`"top", "-2000px"`,
+		`"visibility", "hidden"`,
+		`"pointer-events", "none"`,
+		"application/grpc-web+proto",
+		`now - _lastPageUpdateReq < 1500`,
+	}
+
+	for _, guard := range requiredGuards {
+		if !strings.Contains(body, guard) {
+			t.Errorf("missing top sentinel / fetch storm guard %q in injected HTML", guard)
+		}
+	}
+
+	// Verify that sentinel locking NEVER sets display:none (W3C DOM 0x0 bug leading to Rqb fetch storm)
+	lockSentinelRe := regexp.MustCompile(`function lockTopSentinel\([^)]*\)\s*\{([^}]+)\}`)
+	matches := lockSentinelRe.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		t.Fatalf("failed to locate lockTopSentinel function in injected script")
+	}
+	if strings.Contains(matches[1], `display", "none"`) {
+		t.Errorf("lockTopSentinel MUST NOT use display:none (triggers Rqb fetch storm): %s", matches[1])
 	}
 }

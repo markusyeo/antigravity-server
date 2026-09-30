@@ -40,6 +40,7 @@ The two are not exclusive. `agy-server` only enables the same `remoteControlEnab
 | **File uploads** | 1MB RPC text limit | **Chunked streaming uploader** for large logs, HARs, and datasets |
 | **Connection path** | Relayed through Google's servers | **Direct** — your own domain, LAN, or VPN |
 | **Server restarts** | Language server restart invalidates session; manual page refresh required | **Seamless auto-reconnect** — persistent CSRF token & gRPC status 14 translation restore connection without refreshing |
+| **Memory maintenance** | Memory accumulates indefinitely (~4GB+) over long sessions | **Daily idle restart** — resets language server during idle windows without interrupting active work |
 | **Access without a Google account** | Not possible — the account is the gate | Your own password (PBKDF2), sessions, and rate limiting |
 
 ---
@@ -109,6 +110,7 @@ Antigravity Server supports the Progressive Web App (PWA) standard. Adding it to
 - **Touch-Friendly Controls**: Undo (`↶`) and Copy (`📋`) buttons remain permanently visible on mobile message bubbles.
 - **Full Conversation Management**: Delete conversations via the titlebar menu and toggle Pin/Archive directly from the history dropdown.
 - **Precise Keyboard Tracking**: Automatically collapses safe area insets to 0px and pins top navigation bar while adapting conversation height.
+- **Smooth Scroll Anchoring & Top Guard**: Prevents infinite history fetch storms and anchors scroll position when scrolling up to read earlier messages in long conversations.
 
 <div align="center">
 <img src="docs/assets/demo.gif" width="320" alt="The patched mobile web UI in a phone browser" />
@@ -134,10 +136,11 @@ In addition to mobile devices, Antigravity Server runs smoothly in any modern de
 
 ---
 
-### 🔄 Zero-Downtime Automatic Updates
+### 🔄 Zero-Downtime Automatic Updates & Daily Memory Maintenance
 On headless Linux servers, `agy-server` includes a background auto-updater service:
 - Checks Google's official release buckets daily for new `language_server` versions.
 - Downloads and replaces the core binary atomically with zero downtime.
+- **Daily Idle Restart**: When up to date, periodically restarts `language_server` during idle periods (zero active streams and 15+ minutes of inactivity) to reclaim memory accumulated from long conversations. If active user traffic is detected, maintenance is safely deferred by 10 minutes.
 - Manual check & upgrade: run `agy-server update`.
 
 ---
@@ -146,6 +149,8 @@ On headless Linux servers, `agy-server` includes a background auto-updater servi
 When the language server restarts (such as during updates or service reloads) or the connection briefly drops:
 - **Persistent CSRF Token**: Retains the same authentication token across restarts, preventing stale-session rejections.
 - **gRPC-Web Protocol Translation**: Translates transient connection drops to standard `grpc-status: 14` (Unavailable) rather than broken HTTP 502 HTML, enabling Antigravity's native state stream to automatically reconnect within seconds without refreshing the browser tab.
+- **Auto-Dismiss Stale Disconnect Banners**: Automatically hides the "Lost connection" warning banner as soon as active communication with the server is verified alive, preventing persistent warning banners after successful reconnection.
+- **Stuck Loading Spinner Watchdog**: Detects when mobile WebKit stalls on stale multiplexed HTTP/2 streams and automatically recovers after 30 seconds of idle network, eliminating indefinite loading spinners without interrupting large conversation downloads.
 
 ---
 
@@ -162,6 +167,10 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
 
 `agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
+
+Long conversations initially load the latest 15 steps instead of 50. Scroll upward to fetch older history through Antigravity's native pagination. To restore the original first page, use `--disable-patch conversation-initial-page`.
+
+With a local Antigravity instance running, compare initial stream frames and verify scrollback with `go run ./scripts/benchmark-conversation-load.go`. This measures stream transfer, not browser paint time.
 
 ### Tailscale, LAN and localhost: turn on HTTPS for HTTP/2
 
@@ -193,6 +202,7 @@ tail -f ~/agy-access.log
 ```
 
 Requests still open after five seconds are logged once as `OPEN`; on plain HTTP, six of those is the browser's connection budget gone. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
+
 
 ### Caddy
 ```caddyfile
@@ -283,9 +293,10 @@ The web bundle Antigravity serves — through the official remote bridge or thro
 | **Navigation** | Project `(+)` button omitted on mobile screens | Restores the `(+)` New Conversation button next to each project row |
 | **Conversation Actions** | No delete, pin, or archive on touch | Adds Delete, Pin, and Archive to the `⋮` kebab menu and titlebar |
 | **Message Actions** | Undo and Copy buttons hidden behind hover states | Displays Undo (`↶`) and Copy (`📋`) buttons on touch devices |
-| **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll | Dynamic visualViewport offset tracking, 0px safe-area collapse, and pinned conversation layout |
+| **Virtual Keyboard & Scroll** | iOS Safari viewport bounces and leaves blank gaps on scroll; upward scroll in long chats triggers cascading fetch storms | Dynamic visualViewport offset tracking, 0px safe-area collapse, pinned conversation layout, CSS scroll anchoring, and top-scroll guard against cascading fetch storms |
 | **File Uploads** | 1MB RPC payload limit fails on logs or datasets | Streams files asynchronously to disk via chunked streaming endpoint |
 | **Touch Interaction** | 300ms tap delay and double-tap zoom | Sets `touch-action: manipulation` for immediate touch response |
+| **Connection Health** | "Lost connection" banner remains visible even after successful auto-reconnect; mobile WebKit hangs on stale HTTP/2 streams | Automatically dismisses stale disconnect banners upon verified server heartbeat and recovers from stuck loading spinners (>30s on idle network) via client watchdog |
 | **Input Behavior** | Mobile Enter key sends message or corrupts CJK/Korean IME composition; line navigation jumps to text start when slash commands exist | Preserves native newline, prevents IME corruption, and restores visual line start navigation on Cmd+Left (macOS) / Home (all OS) with slash commands while preserving Ctrl+Left word navigation; Cmd/Ctrl+Enter submits |
 | **Model Selection** | Tapping a model closes the menu immediately | Opens the reasoning effort submenu on tap |
 
