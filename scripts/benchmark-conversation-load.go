@@ -145,7 +145,7 @@ func measure(ctx context.Context, client *http.Client, instance *lsproc.Instance
 	}
 	_, err = instance.Call(ctx, "RequestAgentStatePageUpdate", map[string]any{
 		"conversationId": conversation, "subscriberId": subscriber,
-		"stepPageBounds": map[string]int{"startIndex": steps.TotalLength - 50},
+		"stepPageBounds": map[string]int{"startIndex": steps.TotalLength - 115},
 	})
 	if err != nil {
 		return err
@@ -163,8 +163,8 @@ func measure(ctx context.Context, client *http.Client, instance *lsproc.Instance
 		if pageStart < 0 {
 			pageStart += older.TotalLength
 		}
-		if pageStart <= steps.TotalLength-50 && older.Indices[0] < steps.Indices[0] {
-			fmt.Println("Scrollback: native pagination expanded the page to at least 50 steps")
+		if pageStart <= steps.TotalLength-115 && older.Indices[0] < steps.Indices[0] {
+			fmt.Println("Scrollback: native pagination expanded the page to at least 115 steps")
 			return nil
 		}
 	}

@@ -168,7 +168,7 @@ Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked st
 
 `agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
 
-Long conversations initially load the latest 15 steps instead of 50. Scroll upward to fetch older history through Antigravity's native pagination. To restore the original first page, use `--disable-patch conversation-initial-page`.
+Long conversations initially load the latest 15 steps instead of 50. Scroll upward to fetch older history in batches of at least 100 steps, with larger batches as the loaded history grows. A loading indicator stays visible until the streamed page arrives. Native message anchoring preserves the visible position before paint, including when you load history manually. To restore the original first page, use `--disable-patch conversation-initial-page`.
 
 With a local Antigravity instance running, compare initial stream frames and verify scrollback with `go run ./scripts/benchmark-conversation-load.go`. This measures stream transfer, not browser paint time.
 
