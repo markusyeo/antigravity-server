@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AFSlayer/antigravity-server/internal/accesslog"
 	"github.com/AFSlayer/antigravity-server/internal/assets"
 	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/config"
@@ -24,6 +25,7 @@ import (
 	"github.com/AFSlayer/antigravity-server/internal/proxy"
 	"github.com/AFSlayer/antigravity-server/internal/rules"
 	"github.com/AFSlayer/antigravity-server/internal/signin"
+	"github.com/AFSlayer/antigravity-server/internal/tlsfront"
 	"github.com/AFSlayer/antigravity-server/internal/ui"
 	"github.com/AFSlayer/antigravity-server/internal/updater"
 	"github.com/AFSlayer/antigravity-server/internal/upload"
@@ -52,6 +54,17 @@ type runner struct {
 	// shimURLFile is set only when we started the language server ourselves, which
 	// is what lets the sign-in page drive its OAuth flow.
 	shimURLFile string
+
+	// front is the TLS front door, nil when serving plain HTTP. Its Host, when
+	// set, is the name the certificate is valid for and so the one to advertise.
+	front *tlsfront.Front
+
+	// tailscaleName is this node's MagicDNS name, empty when not on a tailnet. It
+	// is the stable hostname the control panel advertises in place of a 100.x IP.
+	tailscaleName string
+
+	// accessLogPath is where request lines go, empty when off.
+	accessLogPath string
 
 	mu                sync.Mutex
 	generatedPassword string
@@ -124,6 +137,33 @@ func (r *runner) start() error {
 	if err != nil {
 		return err
 	}
+
+	mode, err := tlsfront.ParseMode(r.cfg.TLS)
+	if err != nil {
+		return err
+	}
+	tlsCtx, tlsCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	r.front, err = tlsfront.Load(tlsCtx, tlsfront.Options{
+		Mode:     mode,
+		CertFile: r.cfg.TLSCert,
+		KeyFile:  r.cfg.TLSKey,
+		CacheDir: r.cfg.Dir(),
+	})
+	tlsCancel()
+	if err != nil {
+		return errWithHints(
+			fmt.Sprintf("Could not set up TLS: %v", err),
+			"Run without --tls to serve plain HTTP, or pass --tls file --tls-cert PATH --tls-key PATH.")
+	}
+	if r.front != nil {
+		if r.front.Host != "" {
+			step("Serving HTTPS with a Tailscale certificate for %s", r.front.Host)
+		} else {
+			step("Serving HTTPS with the certificate from %s", r.cfg.TLSCert)
+		}
+	}
+
+	r.tailscaleName = r.resolveTailscaleName()
 
 	publicListener, err := listen(r.cfg.BindAddr, r.cfg.Port)
 	if err != nil {
@@ -221,10 +261,28 @@ func (r *runner) start() error {
 		Shutdown:      stop,
 	})
 
-	publicServer := &http.Server{Handler: authenticator.Middleware(publicMux)}
+	var publicHandler http.Handler = authenticator.Middleware(publicMux)
+
+	if path := r.accessLogFile(); path != "" {
+		logFile, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			warn("could not open the access log: %v", err)
+		} else {
+			defer logFile.Close()
+			publicHandler = accesslog.New(logFile).Wrap(publicHandler)
+			r.accessLogPath = path
+		}
+	}
+
+	publicServer := &http.Server{Handler: publicHandler}
 	localServer := &http.Server{Handler: localUI.Handler()}
 
-	go func() { _ = publicServer.Serve(publicListener) }()
+	if r.front != nil {
+		publicServer.TLSConfig = r.front.TLSConfig()
+		go func() { _ = publicServer.ServeTLS(publicListener, "", "") }()
+	} else {
+		go func() { _ = publicServer.Serve(publicListener) }()
+	}
 	go func() { _ = localServer.Serve(localListener) }()
 
 	controlURL := fmt.Sprintf("http://127.0.0.1:%d/", localPort)
@@ -439,16 +497,45 @@ func (r *runner) endpoints(port int) []ui.Endpoint {
 	local := netinfo.Local()
 	var out []ui.Endpoint
 
-	if local.LAN != "" {
-		out = append(out, ui.Endpoint{Label: "Same network", URL: fmt.Sprintf("http://%s:%d", local.LAN, port)})
+	// When Tailscale TLS is active, the certificate is issued only for the
+	// MagicDNS hostname (r.front.Host). Connecting via raw LAN IP over HTTPS
+	// triggers certificate validation failures in browsers, so advertise the LAN
+	// endpoint only when not using Tailscale TLS.
+	if local.LAN != "" && (r.front == nil || r.front.Host == "") {
+		out = append(out, ui.Endpoint{Label: "Same network", URL: r.url(local.LAN, port)})
 	}
-	if local.Tailscale != "" {
-		out = append(out, ui.Endpoint{Label: "Tailscale", URL: fmt.Sprintf("http://%s:%d", local.Tailscale, port)})
+	if local.Tailscale != "" || (r.front != nil && r.front.Host != "") {
+		host := local.Tailscale
+		if r.tailscaleName != "" {
+			host = r.tailscaleName
+		}
+		out = append(out, ui.Endpoint{Label: "Tailscale", URL: r.url(host, port)})
 	}
 	if len(out) == 0 {
-		out = append(out, ui.Endpoint{Label: "This machine", URL: fmt.Sprintf("http://127.0.0.1:%d", port)})
+		out = append(out, ui.Endpoint{Label: "This machine", URL: r.url("127.0.0.1", port)})
 	}
 	return out
+}
+
+// url builds an address for the public listener in whichever scheme it speaks.
+func (r *runner) url(host string, port int) string {
+	scheme := "http"
+	if r.front != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}
+
+// accessLogFile resolves where request lines go: the configured path, or the
+// data directory in debug mode, or nowhere.
+func (r *runner) accessLogFile() string {
+	if r.cfg.AccessLog != "" {
+		return r.cfg.AccessLog
+	}
+	if r.cfg.Debug {
+		return r.cfg.Path("access.log")
+	}
+	return ""
 }
 
 func (r *runner) networkNote() string {
@@ -462,7 +549,31 @@ func (r *runner) loginBaseURL(port int) string {
 	if r.cfg.PublicURL != "" {
 		return strings.TrimRight(r.cfg.PublicURL, "/")
 	}
-	return fmt.Sprintf("http://%s:%d", netinfo.Local().Primary(), port)
+	host := netinfo.Local().Primary()
+	if r.tailscaleName != "" {
+		host = r.tailscaleName
+	}
+	return r.url(host, port)
+}
+
+// resolveTailscaleName finds this node's MagicDNS name so the control panel can
+// advertise a stable hostname instead of a 100.x address, whether or not TLS is
+// on. It returns "" when the host is not on a tailnet or tailscaled cannot be
+// reached, since the name is only a convenience.
+func (r *runner) resolveTailscaleName() string {
+	if r.front != nil && r.front.Host != "" {
+		return r.front.Host // the certificate already pins the MagicDNS name
+	}
+	if netinfo.Local().Tailscale == "" {
+		return "" // no tailnet interface, so nothing to ask tailscaled about
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	name, err := tlsfront.MagicDNSName(ctx, nil)
+	if err != nil {
+		return ""
+	}
+	return name
 }
 
 func (r *runner) setGeneratedPassword(password string) {
@@ -507,6 +618,17 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 		info("%-14s %s", "Password", dim("set from AGY_PASSWORD"))
 	default:
 		info("%-14s %s", "Password", dim("unchanged — run 'agy-server passwd' to set a new one"))
+	}
+
+	if r.front != nil {
+		info("%-14s %s", "HTTPS", dim("on; browsers use HTTP/2, so streams no longer starve other requests"))
+		if r.front.Host != "" {
+			info("%-14s %s", "", dim("the certificate is for "+r.front.Host+"; use that name, not the IP"))
+		}
+	}
+
+	if r.accessLogPath != "" {
+		info("%-14s %s", "Access log", dim(r.accessLogPath))
 	}
 
 	fmt.Println()
