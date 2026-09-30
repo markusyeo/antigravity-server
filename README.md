@@ -161,6 +161,8 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
 
+`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
+
 ### Tailscale, LAN and localhost: turn on HTTPS for HTTP/2
 
 Browsers open at most six connections to a plain-HTTP host, and the Antigravity UI holds six long-lived streams per open conversation. Over plain HTTP every other request then waits in the browser until a stream drops, which shows up as threads that take 20 seconds or more to open even though the server answered in milliseconds. HTTP/2 multiplexes everything over one connection, and browsers only negotiate it over TLS.
@@ -180,7 +182,17 @@ agy-server --tls file --tls-cert cert.pem --tls-key key.pem
 ```
 
 If you would rather keep `agy-server` on plain HTTP, `tailscale serve --bg 8765` in front of it gives the same HTTPS and HTTP/2 on the Tailscale address only.
-`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
+
+### Access log
+
+To see what a slow page is doing, write one line per request with its status, duration, bytes, and how many requests were in flight when it started:
+
+```bash
+agy-server --access-log ~/agy-access.log
+tail -f ~/agy-access.log
+```
+
+Requests still open after five seconds are logged once as `OPEN`; on plain HTTP, six of those is the browser's connection budget gone. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
 
 ### Caddy
 ```caddyfile

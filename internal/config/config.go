@@ -41,6 +41,10 @@ type Config struct {
 	TLSCert string `json:"tls_cert,omitempty"`
 	TLSKey  string `json:"tls_key,omitempty"`
 
+	// AccessLog is a file that receives one line per request with its duration
+	// and the in-flight count. Empty means no access log.
+	AccessLog string `json:"access_log,omitempty"`
+
 	// Debug comes from AGY_DEBUG only, and is deliberately not persisted: it turns
 	// on the mobile geometry tracer, which is meant for one session at a time.
 	Debug bool `json:"-"`
@@ -187,6 +191,10 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("AGY_TLS_KEY"); v != "" {
 		c.TLSKey = v
+	}
+
+	if v := os.Getenv("AGY_ACCESS_LOG"); v != "" {
+		c.AccessLog = v
 	}
 	if v := os.Getenv("AGY_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = splitList(v)

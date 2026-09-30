@@ -37,10 +37,14 @@ Flags:
   --tls-cert PATH           Certificate for --tls file (with --tls-key)
   --tls-key PATH            Private key for --tls file
 
+  --access-log PATH         One line per request: status, duration, bytes, in-flight count
+
 Environment:
   AGY_PASSWORD, AGY_PORT, AGY_BIND, AGY_PUBLIC_URL, AGY_WORKSPACE_ROOT,
   AGY_LANGUAGE_SERVER, AGY_TRUSTED_PROXIES, AGY_SESSION_DAYS, AGY_HOME,
   AGY_TLS, AGY_TLS_CERT, AGY_TLS_KEY
+
+  AGY_ACCESS_LOG
 
 Docs: https://github.com/AFSlayer/antigravity-server
 `
@@ -115,6 +119,8 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	tlsMode := fs.String("tls", cfg.TLS, "")
 	tlsCert := fs.String("tls-cert", cfg.TLSCert, "")
 	tlsKey := fs.String("tls-key", cfg.TLSKey, "")
+
+	accessLog := fs.String("access-log", cfg.AccessLog, "")
 	disabled := &repeatedFlag{values: cfg.DisabledPatches}
 	fs.Var(disabled, "disable-patch", "")
 
@@ -137,6 +143,8 @@ func loadConfig(args []string, mode runMode) (*config.Config, error) {
 	if cfg.TLS == "" && (cfg.TLSCert != "" || cfg.TLSKey != "") {
 		cfg.TLS = "file"
 	}
+
+	cfg.AccessLog = *accessLog
 
 	if mode == modeServe && len(cfg.TrustedProxies) == 0 && cfg.PublicURL != "" {
 		cfg.TrustedProxies = []string{"127.0.0.1/32", "::1/128"}

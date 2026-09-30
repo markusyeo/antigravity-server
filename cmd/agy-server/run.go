@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AFSlayer/antigravity-server/internal/accesslog"
 	"github.com/AFSlayer/antigravity-server/internal/assets"
 	"github.com/AFSlayer/antigravity-server/internal/auth"
 	"github.com/AFSlayer/antigravity-server/internal/config"
@@ -61,6 +62,9 @@ type runner struct {
 	// tailscaleName is this node's MagicDNS name, empty when not on a tailnet. It
 	// is the stable hostname the control panel advertises in place of a 100.x IP.
 	tailscaleName string
+
+	// accessLogPath is where request lines go, empty when off.
+	accessLogPath string
 
 	mu                sync.Mutex
 	generatedPassword string
@@ -254,7 +258,20 @@ func (r *runner) start() error {
 		Shutdown:      stop,
 	})
 
-	publicServer := &http.Server{Handler: authenticator.Middleware(publicMux)}
+	var publicHandler http.Handler = authenticator.Middleware(publicMux)
+
+	if path := r.accessLogFile(); path != "" {
+		logFile, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			warn("could not open the access log: %v", err)
+		} else {
+			defer logFile.Close()
+			publicHandler = accesslog.New(logFile).Wrap(publicHandler)
+			r.accessLogPath = path
+		}
+	}
+
+	publicServer := &http.Server{Handler: publicHandler}
 	localServer := &http.Server{Handler: localUI.Handler()}
 
 	if r.front != nil {
@@ -506,6 +523,18 @@ func (r *runner) url(host string, port int) string {
 	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
 }
 
+// accessLogFile resolves where request lines go: the configured path, or the
+// data directory in debug mode, or nowhere.
+func (r *runner) accessLogFile() string {
+	if r.cfg.AccessLog != "" {
+		return r.cfg.AccessLog
+	}
+	if r.cfg.Debug {
+		return r.cfg.Path("access.log")
+	}
+	return ""
+}
+
 func (r *runner) networkNote() string {
 	if r.cfg.PublicURL != "" {
 		return "Reachable from the internet. Keep the password strong."
@@ -593,6 +622,10 @@ func (r *runner) printReady(publicPort int, controlURL, generated string, signed
 		if r.front.Host != "" {
 			info("%-14s %s", "", dim("the certificate is for "+r.front.Host+"; use that name, not the IP"))
 		}
+	}
+
+	if r.accessLogPath != "" {
+		info("%-14s %s", "Access log", dim(r.accessLogPath))
 	}
 
 	fmt.Println()
