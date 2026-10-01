@@ -9,3 +9,5 @@
 
 # Private maintenance notes, not part of the project
 /.agents/
+.serena/project.local.yml
+access.log
