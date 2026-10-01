@@ -125,8 +125,8 @@ func sanitizeTrace(body string) string {
 		if line = strings.TrimRight(line, " "); line == "" {
 			continue
 		}
-		if runes := []rune(line); len(runes) > 1000 {
-			line = string(runes[:1000])
+		if runes := []rune(line); len(runes) > 8192 {
+			line = string(runes[:8192])
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')

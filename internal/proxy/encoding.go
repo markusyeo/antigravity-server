@@ -26,7 +26,7 @@ const minCompressBytes = 1024
 
 var gzipPool = sync.Pool{
 	New: func() any {
-		w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+		w, _ := gzip.NewWriterLevel(nil, gzip.DefaultCompression)
 		return w
 	},
 }
@@ -58,29 +58,37 @@ func acceptsGzip(r *http.Request) bool {
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return false
 	}
+	wildcard := false
 	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		enc := strings.TrimSpace(part)
-		if i := strings.IndexByte(enc, ';'); i >= 0 {
-			param := strings.TrimSpace(enc[i+1:])
-			if strings.HasPrefix(param, "q=") {
-				if q, err := strconv.ParseFloat(strings.TrimSpace(param[2:]), 64); err == nil && q == 0 {
-					continue
+		params := strings.Split(part, ";")
+		enc := strings.ToLower(strings.TrimSpace(params[0]))
+		q := 1.0
+		for _, param := range params[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+			if ok && strings.EqualFold(key, "q") {
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil || parsed < 0 || parsed > 1 {
+					q = 0
+				} else {
+					q = parsed
 				}
 			}
-			enc = strings.TrimSpace(enc[:i])
 		}
-		if enc == "gzip" || enc == "*" {
-			return true
+		if enc == "gzip" {
+			return q > 0
+		}
+		if enc == "*" {
+			wildcard = q > 0
 		}
 	}
-	return false
+	return wildcard
 }
 
 // gzipHandler compresses responses the upstream left as identity when the
 // client accepts gzip and the body is a compressible type.
 func gzipHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !acceptsGzip(r) {
+		if r.Method == http.MethodHead || !acceptsGzip(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

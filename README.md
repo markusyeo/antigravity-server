@@ -166,11 +166,13 @@ Manage your agent instructions (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/
 
 Antigravity uses Server-Sent Events (SSE), WebSocket connections, and chunked streaming. If running behind a custom reverse proxy, disable proxy buffering and configure WebSocket upgrades:
 
-`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front.
+`agy-server` gzips responses itself, including the streamed conversation snapshot and the patched bundle, so compression at the reverse proxy is optional. Direct access over Tailscale or LAN gets the same compression with no proxy in front. The patched bundle is compressed once at startup and reused while its upstream contents stay unchanged. Streaming responses use default gzip compression and flush each chunk immediately.
 
 Long conversations initially load the latest 15 steps instead of 50. Scroll upward to fetch older history in batches of at least 100 steps, with larger batches as the loaded history grows. A loading indicator stays visible until the streamed page arrives. Native message anchoring preserves the visible position before paint, including when you load history manually. To restore the original first page, use `--disable-patch conversation-initial-page`.
 
-With a local Antigravity instance running, compare initial stream frames and verify scrollback with `go run ./scripts/benchmark-conversation-load.go`. This measures stream transfer, not browser paint time.
+With a local Antigravity instance running, compare initial stream frames and verify scrollback with `go run ./scripts/benchmark-conversation-load.go`. Add `--title 'Version Updates' --inspect --compress` to select a thread, see which JSON fields dominate its snapshot, and compare compressed wire sizes. This measures local stream transfer and compression, not browser paint time.
+
+The startup page shows a status before the application bundle runs. Slow conversation loads show explanatory text after 1.5 seconds and offer a reload button after 15 seconds. Reloading is blocked while the composer contains a draft.
 
 ### Tailscale, LAN and localhost: turn on HTTPS for HTTP/2
 
@@ -201,9 +203,9 @@ agy-server --access-log ~/agy-access.log
 tail -f ~/agy-access.log
 ```
 
-Requests still open after five seconds are logged once as `OPEN`; on plain HTTP, six of those is the browser's connection budget gone. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
+Requests still open after five seconds are logged once as `OPEN`, including bytes sent so far and the current write/flush operation with its elapsed time. On plain HTTP, long-lived streams can consume the browser's connection budget. Completion lines include request and connection IDs, time to headers and first body write, encoding, upstream/patch timings, cumulative write/flush time, and I/O errors. `CONN` lines record connection opens and closes; match their IDs to requests to distinguish reconnects from stalls on an existing connection. A stream's total duration is its lifetime, not the time it took to load messages. `AGY_DEBUG=1` writes the log to `access.log` in the data directory without further flags.
 
-`AGY_DEBUG=1` also records conversation stream and message paint timings in `mobile-debug.log`. The trace distinguishes waiting for the stream from waiting for messages to render and records no message contents. To measure loading without the keyboard geometry tracer, add `--disable-patch mobile-debug`.
+`AGY_DEBUG=1` also records startup, thread click, stream headers, first bytes, first complete frame, state, message mounting, and paint timings in `mobile-debug.log`. Request and connection IDs connect browser timings to the access log; bundle sizes and supported browser long-task timings help identify transfer and rendering delays. Unsupported metrics are `null`. The trace records no message contents. To measure loading without the keyboard geometry tracer, add `--disable-patch mobile-debug`. Summarize phone captures with `python3 scripts/summarize-load-traces.py --phone --summary`; omit `--summary` for detailed events or pass a log path when using a custom `AGY_HOME`. Each summary separates thread opens from reconnects, flags background activity during loading, and records when you leave before messages paint, so a late provider disposal or background paint delay is not mistaken for time spent watching a loader.
 
 
 ### Caddy

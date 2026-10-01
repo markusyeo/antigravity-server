@@ -27,6 +27,8 @@ jobs:
 
       - run: go test -race ./...
 
+      - run: python3 -B scripts/test_summarize_load_traces.py
+
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"

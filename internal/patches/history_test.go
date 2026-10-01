@@ -11,7 +11,7 @@ func TestHistoryProviderLifecycle(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required to execute the history provider")
 	}
-	if out, err := exec.Command("node", "--test", "history_test.cjs", "load_debug_test.cjs").CombinedOutput(); err != nil {
+	if out, err := exec.Command("node", "--test", "history_test.cjs", "load_debug_test.cjs", "watchdog_test.cjs").CombinedOutput(); err != nil {
 		t.Fatalf("history provider lifecycle: %v\n%s", err, out)
 	}
 }

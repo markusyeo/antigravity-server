@@ -9,6 +9,9 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -42,6 +45,20 @@ type Proxy struct {
 	reported       sync.Map
 	activeConns    atomic.Int64
 	lastActivityNs atomic.Int64
+	bundleMu       sync.Mutex
+	bundle         *bundleCache
+	transport      http.RoundTripper
+}
+
+type bundleCache struct {
+	digest         [32]byte
+	identity, gzip []byte
+}
+
+type requestTimingKey struct{}
+type requestTiming struct {
+	start time.Time
+	gzip  bool
 }
 
 // New builds a Proxy targeting the language server on opts.TargetPort.
@@ -63,10 +80,12 @@ func New(opts Options) (*Proxy, error) {
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 	}
+	p.transport = rp.Transport
 
 	host := target.Host
 	base := rp.Director
 	rp.Director = func(req *http.Request) {
+		*req = *req.WithContext(context.WithValue(req.Context(), requestTimingKey{}, requestTiming{time.Now(), acceptsGzip(req)}))
 		base(req)
 		req.Host = host
 		req.Header.Set("Origin", target.String())
@@ -77,6 +96,8 @@ func New(opts Options) (*Proxy, error) {
 
 		if wantsPatch(req) {
 			req.Header.Del("Accept-Encoding")
+			req.Header.Del("If-None-Match")
+			req.Header.Del("If-Modified-Since")
 		}
 	}
 
@@ -85,6 +106,26 @@ func New(opts Options) (*Proxy, error) {
 
 	p.handler = gzipHandler(rp)
 	return p, nil
+}
+
+// WarmBundle prepares the patched representations before the first browser arrives.
+func (p *Proxy) WarmBundle(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://127.0.0.1:%d/main.js", p.opts.TargetPort), nil)
+	if err != nil {
+		return err
+	}
+	if p.opts.TargetCSRFToken != "" {
+		req.Header.Set("x-codeium-csrf-token", p.opts.TargetCSRFToken)
+	}
+	resp, err := p.transport.RoundTrip(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bundle warmup returned %s", resp.Status)
+	}
+	return p.modifyResponse(resp)
 }
 
 // Handler returns the HTTP handler to mount, tracking in-flight streams and activity for idle detection.
@@ -145,6 +186,9 @@ func targetFor(resp *http.Response) (patches.Target, bool) {
 	if resp.Request == nil || resp.StatusCode != http.StatusOK {
 		return 0, false
 	}
+	if resp.Request.Method == http.MethodHead {
+		return 0, false
+	}
 	if resp.Header.Get("Content-Encoding") != "" {
 		return 0, false
 	}
@@ -159,6 +203,11 @@ func targetFor(resp *http.Response) (patches.Target, bool) {
 }
 
 func (p *Proxy) modifyResponse(resp *http.Response) error {
+	if resp.Request != nil {
+		if timing, ok := resp.Request.Context().Value(requestTimingKey{}).(requestTiming); ok {
+			resp.Header.Add("Server-Timing", fmt.Sprintf("upstream;dur=%.1f", float64(time.Since(timing.start).Microseconds())/1000))
+		}
+	}
 	target, ok := targetFor(resp)
 	if !ok {
 		return nil
@@ -170,8 +219,36 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		return err
 	}
 
-	patched, report := patches.Apply(target, body, p.opts.Patch)
-	p.report(target, report)
+	started := time.Now()
+	var patched []byte
+	if target == patches.MainJS {
+		digest := sha256.Sum256(body)
+		p.bundleMu.Lock()
+		if p.bundle == nil || p.bundle.digest != digest {
+			identity, report := patches.Apply(target, body, p.opts.Patch)
+			p.report(target, report)
+			var compressed bytes.Buffer
+			writer := gzip.NewWriter(&compressed)
+			_, _ = writer.Write(identity)
+			_ = writer.Close()
+			p.bundle = &bundleCache{digest: digest, identity: identity, gzip: compressed.Bytes()}
+		}
+		patched = p.bundle.identity
+		resp.Header.Add("Vary", "Accept-Encoding")
+		if timing, ok := resp.Request.Context().Value(requestTimingKey{}).(requestTiming); ok && timing.gzip && len(patched) >= minCompressBytes {
+			patched = p.bundle.gzip
+			resp.Header.Set("Content-Encoding", "gzip")
+		}
+		p.bundleMu.Unlock()
+	} else {
+		var report patches.Report
+		patched, report = patches.Apply(target, body, p.opts.Patch)
+		p.report(target, report)
+	}
+	resp.Header.Add("Server-Timing", fmt.Sprintf("patch;dur=%.1f", float64(time.Since(started).Microseconds())/1000))
+	// Upstream validators describe the original document, not our representation.
+	resp.Header.Del("ETag")
+	resp.Header.Del("Last-Modified")
 
 	resp.Body = io.NopCloser(bytes.NewReader(patched))
 	resp.ContentLength = int64(len(patched))

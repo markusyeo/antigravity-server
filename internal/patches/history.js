@@ -95,6 +95,11 @@
     statuses.forEach(function (value, id) {
       if (location.href.indexOf(id) !== -1) status = value;
     });
+    if (!status) {
+      if (statusNode) statusNode.remove();
+      statusNode = null;
+      return;
+    }
     var viewport = document.querySelector('[data-testid="conversation-view"] [data-testid="autoscroll-viewport"]');
     if (!viewport) {
       if (statusNode) statusNode.remove();
@@ -116,6 +121,11 @@
     statusNode.hidden = !status;
     statusNode.dataset.loading = status === "loading" ? "true" : "false";
   }
-  new MutationObserver(renderStatus).observe(document.documentElement, { childList: true, subtree: true });
+  var scheduled = false;
+  new MutationObserver(function () {
+    if (scheduled || !statuses.size && !statusNode) return;
+    scheduled = true;
+    requestAnimationFrame(function () { scheduled = false; renderStatus(); });
+  }).observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener("popstate", renderStatus);
 })();
