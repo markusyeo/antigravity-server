@@ -74,6 +74,13 @@ func mobile(o Options) bool { return o.MobileUX }
 func All() []Patch {
 	return []Patch{
 		{
+			ID:        "loading-feedback",
+			Desc:      "Paint an immediate startup status and offer recovery for slow conversations",
+			Target:    HTML,
+			Kind:      InjectHead,
+			ReplaceFn: loadingScript,
+		},
+		{
 			ID:      "conversation-history-batches",
 			Desc:    "Fetch at least 100 older conversation steps per page",
 			Target:  MainJS,
@@ -2160,21 +2167,44 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
   var lastPingSuccess = 0;
   var activePingPromise = null;
   var MAX_RELOAD_ATTEMPTS = 3;
-  var lastNetworkActivity = Date.now();
+  var lastConversationActivity = Date.now();
 
-  // Track network fetch activity so we never interrupt in-progress downloads of large conversations/summaries
+  // Only snapshot progress for the visible conversation postpones recovery.
   if (window.fetch && !window.__agyFetchActivityTracked) {
     window.__agyFetchActivityTracked = true;
     var _origFetchForWatchdog = window.fetch;
     window.fetch = function () {
-      lastNetworkActivity = Date.now();
+      var input = arguments[0];
+      var init = arguments[1];
+      var url = typeof input === "string" ? input : input.url || String(input);
+      var conversationPath = window.location.pathname;
+      var conversationStream = url.indexOf("/StreamAgentStateUpdates") !== -1;
+      if (conversationStream && init && init.body) {
+        try {
+          var body = init.body.subarray ? init.body : new Uint8Array(init.body);
+          var conversationId = JSON.parse(new TextDecoder().decode(body.subarray(5))).conversationId;
+          conversationStream = conversationPath === "/c/" + conversationId;
+        } catch (_) { conversationStream = false; }
+      }
       var p = _origFetchForWatchdog.apply(this, arguments);
       if (p && p.then) {
         return p.then(function (res) {
-          lastNetworkActivity = Date.now();
+          if (conversationStream && res.body && res.headers.get("Content-Type") && res.headers.get("Content-Type").indexOf("application/connect+") !== -1) {
+            var getReader = res.body.getReader;
+            res.body.getReader = function () {
+              var reader = getReader.apply(this, arguments);
+              var read = reader.read;
+              reader.read = function () {
+                return read.apply(this, arguments).then(function (chunk) {
+                  if (!chunk.done && chunk.value.byteLength && window.location.pathname === conversationPath) lastConversationActivity = Date.now();
+                  return chunk;
+                });
+              };
+              return reader;
+            };
+          }
           return res;
         }, function (err) {
-          lastNetworkActivity = Date.now();
           throw err;
         });
       }
@@ -2239,7 +2269,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     });
   }
 
-  // 2. Watchdog: Recover if conversation loading spinner is stuck > 30s AND network is completely idle (>5s)
+  // 2. Recover an empty conversation after 30s without snapshot progress.
   var stuckTimerStart = 0;
   var currentPath = window.location.pathname;
 
@@ -2261,7 +2291,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
     }
 
     var spinner = convoView.querySelector('.animate-spin, [name="progress_activity"]');
-    var hasMessages = convoView.querySelector('.user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
+    var hasMessages = convoView.querySelector('[role="article"], .user-message-bubble, .agent-message-bubble, [data-testid="autoscroll-viewport"] [role="region"], [data-testid="autoscroll-viewport"] [data-testid="message-content"]');
 
     if (hasMessages) {
       // Conversation loaded successfully; reset reload retry circuit breaker
@@ -2273,8 +2303,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 
     if (spinner && !hasMessages) {
       var now = Date.now();
-      // If network communication is actively ongoing (e.g. streaming large conversation/summaries), defer stuck timer
-      if (now - lastNetworkActivity < 5000) {
+      if (now - lastConversationActivity < 5000) {
         stuckTimerStart = now;
         return;
       }

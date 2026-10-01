@@ -49,8 +49,8 @@ func TestProxyGzipsPatchedBundle(t *testing.T) {
 	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
 		t.Fatalf("want gzip on the patched bundle, got %q", got)
 	}
-	if resp.Header.Get("Content-Length") != "" {
-		t.Error("Content-Length must be dropped once the body is re-encoded")
+	if resp.Header.Get("Content-Length") == "" {
+		t.Error("precompressed bundle should advertise its wire length")
 	}
 	if !strings.Contains(resp.Header.Get("Vary"), "Accept-Encoding") {
 		t.Error("want Vary: Accept-Encoding")

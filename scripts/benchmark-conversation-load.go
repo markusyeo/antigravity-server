@@ -4,14 +4,18 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
@@ -29,6 +33,7 @@ type page struct {
 }
 
 type frame struct {
+	raw    []byte
 	Update struct {
 		MainTrajectoryUpdate struct {
 			StepsUpdate *page `json:"stepsUpdate"`
@@ -52,10 +57,15 @@ func readFrame(body io.Reader) (frame, int, error) {
 	}
 	var result frame
 	err := json.Unmarshal(data, &result)
+	result.raw = data
 	return result, size, err
 }
 
 func run() error {
+	title := flag.String("title", "", "Match a conversation title instead of selecting the longest")
+	inspect := flag.Bool("inspect", false, "Report large JSON fields by size, without their contents")
+	compress := flag.Bool("compress", false, "Compare gzip levels with the proxy's streaming flush cadence")
+	flag.Parse()
 	instance, err := lsproc.Find()
 	if err != nil {
 		return err
@@ -68,7 +78,8 @@ func run() error {
 	}
 	var summaries struct {
 		Trajectories map[string]struct {
-			StepCount int `json:"stepCount"`
+			StepCount int    `json:"stepCount"`
+			Summary   string `json:"summary"`
 		} `json:"trajectorySummaries"`
 	}
 	if err := json.Unmarshal(data, &summaries); err != nil {
@@ -77,6 +88,9 @@ func run() error {
 	var conversation string
 	var longest int
 	for id, summary := range summaries.Trajectories {
+		if *title != "" && !strings.Contains(strings.ToLower(summary.Summary), strings.ToLower(*title)) {
+			continue
+		}
 		if summary.StepCount > longest {
 			conversation, longest = id, summary.StepCount
 		}
@@ -87,16 +101,16 @@ func run() error {
 	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
-	fmt.Printf("Longest conversation: %d steps\n", longest)
+	fmt.Printf("Selected conversation: %s (%d steps)\n", conversation, longest)
 	for _, count := range []int{50, 15} {
-		if err := measure(ctx, client, instance, conversation, count); err != nil {
+		if err := measure(ctx, client, instance, conversation, count, *inspect, *compress); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func measure(ctx context.Context, client *http.Client, instance *lsproc.Instance, conversation string, count int) error {
+func measure(ctx context.Context, client *http.Client, instance *lsproc.Instance, conversation string, count int, inspect, compress bool) error {
 	subscriber := fmt.Sprintf("agy-benchmark-%d", time.Now().UnixNano())
 	payload, err := json.Marshal(map[string]any{
 		"conversationId": conversation, "subscriberId": subscriber,
@@ -140,6 +154,23 @@ func measure(ctx context.Context, client *http.Client, instance *lsproc.Instance
 		return fmt.Errorf("initial page does not contain the latest %d steps: got %d indices, total %d, bounds %+v", count, len(steps.Indices), steps.TotalLength, steps.PageBounds)
 	}
 	fmt.Printf("Latest %2d steps: %7d bytes, first frame %s\n", count, size, elapsed.Round(time.Microsecond))
+	if inspect {
+		printSizes("", initial.raw, 0)
+	}
+	if compress {
+		for _, level := range []int{gzip.BestSpeed, gzip.DefaultCompression} {
+			var out bytes.Buffer
+			started := time.Now()
+			writer, _ := gzip.NewWriterLevel(&out, level)
+			for offset := 0; offset < len(initial.raw); offset += 32 << 10 {
+				end := min(offset+(32<<10), len(initial.raw))
+				_, _ = writer.Write(initial.raw[offset:end])
+				_ = writer.Flush()
+			}
+			_ = writer.Close()
+			fmt.Printf("  Gzip level %d: %d bytes, compression %s\n", level, out.Len(), time.Since(started).Round(time.Microsecond))
+		}
+	}
 	if count == 50 {
 		return nil
 	}
@@ -167,6 +198,30 @@ func measure(ctx context.Context, client *http.Client, instance *lsproc.Instance
 			fmt.Println("Scrollback: native pagination expanded the page to at least 115 steps")
 			return nil
 		}
+	}
+}
+
+func printSizes(prefix string, data []byte, depth int) {
+	if depth > 5 {
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := fields[key]
+		if len(value) < 10000 {
+			continue
+		}
+		name := prefix + key
+		fmt.Printf("  %s: %d bytes\n", name, len(value))
+		printSizes(name+".", value, depth+1)
 	}
 }
 

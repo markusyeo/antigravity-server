@@ -39,6 +39,21 @@ var historyJavaScript string
 //go:embed load_debug.js
 var loadDebugJavaScript string
 
+//go:embed loading.js
+var loadingJavaScript string
+
+func loadingScript(Options) string {
+	return `<style>
+.agy-loading-shell { position:fixed; inset:0; display:grid; place-content:center; background:#fafafa; color:#242424; font:14px system-ui,sans-serif; }
+@media (prefers-color-scheme:dark) { .agy-loading-shell { background:#161616; color:#ededed; } }
+.agy-loading-group { display:flex; flex-direction:column; align-items:center; }
+.agy-conversation-loading { display:flex; flex-direction:column; align-items:center; gap:12px; max-width:280px; margin:16px auto 0; padding:0 16px; text-align:center; color:var(--foreground); font:inherit; font-size:14px; }
+.agy-conversation-loading button { min-height:44px; padding:8px 14px; border:1px solid currentColor; border-radius:6px; background:var(--background); color:inherit; font:inherit; cursor:pointer; }
+.agy-conversation-loading button[hidden] { display:none; }
+.agy-conversation-loading button:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
+</style><script id="agy-loading-feedback">` + loadingJavaScript + `</script>`
+}
+
 func loadDebugScript(Options) string {
 	return `<script id="agy-load-debug">` + loadDebugJavaScript + `</script>`
 }

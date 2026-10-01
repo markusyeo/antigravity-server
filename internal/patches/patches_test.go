@@ -535,7 +535,7 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 		`document.querySelector('[contenteditable="true"]')`,
 		`data.available === false`,
 		`now - lastPingSuccess < 3000`,
-		`now - lastNetworkActivity < 5000`,
+		`now - lastConversationActivity < 5000`,
 		`now - stuckTimerStart > 30000`,
 		`now - lastReload > 30000`,
 		`window.__agyFetchActivityTracked`,

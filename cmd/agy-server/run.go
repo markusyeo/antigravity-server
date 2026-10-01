@@ -121,7 +121,7 @@ func (r *runner) start() error {
 		Disabled:      r.cfg.DisabledPatchSet(),
 		Debug:         r.cfg.Debug,
 	}
-	patchOpts.CacheKey = patches.CacheKey(version, patchOpts)
+	patchOpts.CacheKey = patches.CacheKey(fmt.Sprintf("%s:ls-%d", version, instance.PID), patchOpts)
 
 	tracker := patches.NewTracker()
 
@@ -137,6 +137,11 @@ func (r *runner) start() error {
 	if err != nil {
 		return err
 	}
+	warmCtx, warmCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := p.WarmBundle(warmCtx); err != nil {
+		warn("could not prepare the web bundle: %v", err)
+	}
+	warmCancel()
 
 	mode, err := tlsfront.ParseMode(r.cfg.TLS)
 	if err != nil {
@@ -263,18 +268,24 @@ func (r *runner) start() error {
 
 	var publicHandler http.Handler = authenticator.Middleware(publicMux)
 
+	var accessLogger *accesslog.Logger
 	if path := r.accessLogFile(); path != "" {
 		logFile, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			warn("could not open the access log: %v", err)
 		} else {
 			defer logFile.Close()
-			publicHandler = accesslog.New(logFile).Wrap(publicHandler)
+			accessLogger = accesslog.New(logFile)
+			publicHandler = accessLogger.Wrap(publicHandler)
 			r.accessLogPath = path
 		}
 	}
 
 	publicServer := &http.Server{Handler: publicHandler}
+	if accessLogger != nil {
+		publicServer.ConnContext = accessLogger.ConnContext
+		publicServer.ConnState = accessLogger.ConnState
+	}
 	localServer := &http.Server{Handler: localUI.Handler()}
 
 	if r.front != nil {
