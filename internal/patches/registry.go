@@ -74,12 +74,59 @@ func mobile(o Options) bool { return o.MobileUX }
 func All() []Patch {
 	return []Patch{
 		{
+			ID:      "conversation-history-batches",
+			Desc:    "Fetch at least 100 older conversation steps per page",
+			Target:  MainJS,
+			Kind:    Literal,
+			Find:    `expansion:{minBatchSize:15,multiplier:.5,maxBatchSize:500}`,
+			Replace: `expansion:{minBatchSize:100,multiplier:.5,maxBatchSize:500}`,
+		},
+		{
+			ID:      "conversation-history-provider",
+			Desc:    "Keep history requests in flight until the streamed page arrives",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  historyProviderRe,
+			Replace: `return(globalThis.__agyHistory?globalThis.__agyHistory.wrapProvider:p=>p)($1)`,
+		},
+		{
+			ID:      "conversation-history-manual-anchor",
+			Desc:    "Preserve the visible message when manually loading older history",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  historyManualAnchorRe,
+			Replace: `${prefix}if(${normalize}(${next},${total}).startIndex!==${normalize}(${slice},${total}).startIndex){let agyAnchor=${anchor}(${sections}.current);agyAnchor&&${snapshot}(agyIndex=>agyIndex!==${normalize}(${slice},${total}).startIndex,agyAnchor.sectionKey)}${busy}${tail}${deps},${sections},${snapshot}${suffix}`,
+		},
+		{
+			ID:      "conversation-history-anchor-timeout",
+			Desc:    "Retain the message anchor while a slower history page loads",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  historyAnchorTimeoutRe,
+			Replace: `${1}2E4${2}`,
+		},
+		{
+			ID:        "conversation-history-status",
+			Desc:      "Show loading and error status for older conversation history",
+			Target:    HTML,
+			Kind:      InjectHead,
+			ReplaceFn: historyScript,
+		},
+		{
 			ID:      "conversation-initial-page",
 			Desc:    "Load the latest 15 conversation steps first, fetching older history on scroll",
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  initialConversationPageRe,
 			Replace: `${1}{startIndex:-15}${2}`,
+		},
+		{
+			ID:        "conversation-load-debug",
+			Desc:      "Trace conversation stream and message paint timing to the local debug log",
+			Target:    HTML,
+			Kind:      InjectHead,
+			Enabled:   func(o Options) bool { return o.Debug && !o.Disabled["conversation-history-status"] },
+			ReplaceFn: loadDebugScript,
 		},
 		// Without this the phone's browser would call https://127.0.0.1:<port>,
 		// which resolves to the phone itself. Nothing works until it is fixed.
@@ -757,7 +804,7 @@ div.user-input-buttons-container > * {
     div[data-testid="conversation-view"] [data-testid="autoscroll-viewport"] {
       overscroll-behavior-y: contain !important;
       -webkit-overflow-scrolling: touch !important;
-      overflow-anchor: auto !important;
+      overflow-anchor: none !important;
     }
 
     /* Dual Mode Overrides: Restore relative flow and viewport bounds when question is active */
@@ -1442,180 +1489,10 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     window.__agyLastCompEnd = performance.now();
   }, true);
 
-  // Mobile Conversation Top-Scroll Guard & Anchoring
-  // Prevents cascading fetch storm when scrolling to top on mobile and preserves scroll position.
-  var topSentinelLockedUntil = 0;
-  var lastScrollHeight = 0;
-  var lastScrollTop = 0;
-  var initialLoadGuardUntil = performance.now() + 2000;
-  window.__agyInitialLoadUntil = initialLoadGuardUntil;
-  var currentConvoUrl = window.location.pathname;
-  var guardedScroller = null;
-
-  // Intercept and throttle RequestAgentStatePageUpdate to strictly prevent fetch storms
-  if (!window.__agyFetchIntercepted && window.fetch) {
-    window.__agyFetchIntercepted = true;
-    var _origFetch = window.fetch;
-    var _lastPageUpdateReq = 0;
-
-    window.fetch = function (resource, init) {
-      var urlStr = (typeof resource === "string") ? resource : (resource && resource.url) || "";
-      if (urlStr.indexOf("RequestAgentStatePageUpdate") !== -1) {
-        var now = performance.now();
-        // 1. Guard against initial entry fetch storm (first 2 seconds of conversation load)
-        // 2. Minimum 1.5s cooldown between pagination fetches
-        if (now < (window.__agyInitialLoadUntil || 0) || (now - _lastPageUpdateReq < 1500)) {
-          // Return synthetic empty gRPC-Web response to satisfy caller without network storm
-          return Promise.resolve(new Response(new Uint8Array([0, 0, 0, 0, 0]), {
-            status: 200,
-            headers: {
-              "Content-Type": "application/grpc-web+proto",
-              "grpc-status": "0",
-              "grpc-message": ""
-            }
-          }));
-        }
-        _lastPageUpdateReq = now;
-      }
-      return _origFetch.apply(this, arguments);
-    };
-  }
-
-  function getTopSentinel(sc) {
-    if (!sc) return null;
-    return sc.querySelector('div.h-px.w-full[aria-hidden="true"]') ||
-           sc.querySelector('div.h-px.w-full:first-child');
-  }
-
-  function lockTopSentinel(sentinel) {
-    if (!sentinel) return;
-    // CRITICAL: NEVER use display:none! In W3C DOM spec, display:none returns bounding rect {0,0}.
-    // Antigravity virtualization Rqb() calculates: sentinel.bottom > viewport.top - 150 (0 > -102 === true),
-    // which causes endless 100ms fetch storms!
-    // Instead, offset sentinel coordinate to top: -2000px with visibility: hidden.
-    sentinel.style.setProperty("position", "absolute", "important");
-    sentinel.style.setProperty("top", "-2000px", "important");
-    sentinel.style.setProperty("visibility", "hidden", "important");
-    sentinel.style.setProperty("pointer-events", "none", "important");
-    sentinel.style.removeProperty("display");
-  }
-
-  function unlockTopSentinel(sentinel) {
-    if (!sentinel) return;
-    sentinel.style.removeProperty("position");
-    sentinel.style.removeProperty("top");
-    sentinel.style.removeProperty("visibility");
-    sentinel.style.removeProperty("pointer-events");
-    sentinel.style.removeProperty("display");
-  }
-
-  function updateTopScrollGuard() {
-    var sc = chatScroller();
-    if (!sc) return;
-
-    if (window.location.pathname !== currentConvoUrl) {
-      currentConvoUrl = window.location.pathname;
-      initialLoadGuardUntil = performance.now() + 2000;
-      window.__agyInitialLoadUntil = initialLoadGuardUntil;
-      topSentinelLockedUntil = 0;
-      lastScrollHeight = sc.scrollHeight;
-      lastScrollTop = sc.scrollTop;
-    }
-
-    var sentinel = getTopSentinel(sc);
-    if (!sentinel) return;
-
-    var now = performance.now();
-    var shouldLock = (now < initialLoadGuardUntil) || (now < topSentinelLockedUntil);
-
-    if (shouldLock) {
-      lockTopSentinel(sentinel);
-    } else {
-      unlockTopSentinel(sentinel);
-    }
-  }
-
-  function handleScrollerScroll() {
-    var sc = chatScroller();
-    if (!sc) return;
-
-    var curTop = sc.scrollTop;
-
-    // Once user has scrolled down past 50px, unlock the top sentinel
-    if (curTop >= 50 && topSentinelLockedUntil > 0) {
-      topSentinelLockedUntil = 0;
-      var sentinel = getTopSentinel(sc);
-      if (sentinel && performance.now() >= initialLoadGuardUntil) {
-        unlockTopSentinel(sentinel);
-      }
-    }
-
-    lastScrollTop = curTop;
-    lastScrollHeight = sc.scrollHeight;
-  }
-
-  function handleScrollerMutation() {
-    var sc = chatScroller();
-    if (!sc) return;
-
-    var curHeight = sc.scrollHeight;
-    var curTop = sc.scrollTop;
-
-    // Detect prepend: content expanded while at or near top
-    if (lastScrollHeight > 0 && curHeight > lastScrollHeight) {
-      var delta = curHeight - lastScrollHeight;
-      if (lastScrollTop <= 50 && delta >= 30) {
-        // Prepend detected: lock sentinel for 3s to stop cascading fetch storm
-        topSentinelLockedUntil = performance.now() + 3000;
-        var sentinel = getTopSentinel(sc);
-        if (sentinel) {
-          lockTopSentinel(sentinel);
-        }
-
-        // Programmatic scroll position restoration for mobile WebKit
-        var targetTop = lastScrollTop + delta;
-        sc.scrollTop = targetTop;
-        requestAnimationFrame(function () {
-          sc.scrollTop = targetTop;
-        });
-        setTimeout(function () {
-          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
-        }, 50);
-        setTimeout(function () {
-          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
-        }, 150);
-        setTimeout(function () {
-          if (sc.scrollTop < 20) sc.scrollTop = targetTop;
-        }, 300);
-      }
-    }
-
-    lastScrollHeight = curHeight;
-    lastScrollTop = curTop;
-    updateTopScrollGuard();
-  }
-
-  function attachScrollerGuard() {
-    var sc = chatScroller();
-    if (!sc) return;
-    if (guardedScroller !== sc) {
-      if (guardedScroller) {
-        guardedScroller.removeEventListener("scroll", handleScrollerScroll);
-      }
-      guardedScroller = sc;
-      lastScrollHeight = sc.scrollHeight;
-      lastScrollTop = sc.scrollTop;
-      sc.addEventListener("scroll", handleScrollerScroll, { passive: true });
-    }
-    updateTopScrollGuard();
-  }
-
   // Observe DOM for question modal or interaction card appearance and scroller updates
   var lastQuestionModalSeen = false;
   var modalObserver = new MutationObserver(function () {
     updateQuestionState();
-    attachScrollerGuard();
-    handleScrollerMutation();
     var hasModal = hasActiveQuestion;
     if (hasModal && !lastQuestionModalSeen) {
       lastQuestionModalSeen = true;
@@ -1627,13 +1504,11 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
   if (document.body) {
     modalObserver.observe(document.body, { childList: true, subtree: true });
     updateQuestionState();
-    attachScrollerGuard();
   } else {
     document.addEventListener("DOMContentLoaded", function () {
       if (document.body) {
         modalObserver.observe(document.body, { childList: true, subtree: true });
         updateQuestionState();
-        attachScrollerGuard();
       }
     }, { once: true });
   }

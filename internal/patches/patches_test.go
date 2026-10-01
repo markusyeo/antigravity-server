@@ -39,6 +39,10 @@ func syntheticBundle() []byte {
 // regexpFixtures supplies a synthetic match for each regexp patch, since a
 // regexp has no literal to reuse.
 var regexpFixtures = map[string]string{
+	"conversation-history-provider":       `return{getState:()=>state,onDidChange:emitter.event,dispose:()=>{controller.abort("disposed");emitter.dispose()},requestPageUpdate:async page=>send(make(schemas.AgentStatePageUpdateRequestSchema,{conversationId:id,subscriberId:subscriber,stepPageBounds:page}))}`,
+	"conversation-history-anchor-timeout": `.current={shouldRestore:predicate,eltKey:key,offset:offset};var update=()=>{frame===undefined&&(frame=requestAnimationFrame(()=>{refresh()}))};cleanup.current=setTimeout(clear,5E3)`,
+	"conversation-history-manual-anchor":  historyManualFixture,
+
 	"conversation-initial-page":                 `initialStepsSlice:r(ue.SliceSchema,EJa),initialGeneratorMetadatasSlice:`,
 	"skip-onboarding":                           `c.hasOnboardingScreens&&e!==2&&RK({to:"/onboarding",replace:!0,throw:!0})`,
 	"mobile-enter-newline":                      `registerCommand(FE,k=>{if(!k)return!1;k.preventDefault();`,
@@ -311,8 +315,8 @@ func TestHTMLInjection(t *testing.T) {
 		`window.__agyLastCompEnd = performance.now();`,
 		`window.dispatchEvent(new MouseEvent('mouseup'));`,
 		`agy-line-start-nav`,
-		`overflow-anchor: auto !important;`,
-		`updateTopScrollGuard()`,
+		`overflow-anchor: none !important;`,
+		`Loading older messages`,
 		`agy-connection-watchdog`,
 		`checkAndDismissLostConnectionBanner`,
 		`checkConversationSpinnerStuck`,
@@ -562,36 +566,14 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 	}
 }
 
-func TestTopSentinelGuardAndFetchInterceptor(t *testing.T) {
+func TestHistoryUsesNativePaging(t *testing.T) {
+	if strings.Contains(keyboardDetect, "RequestAgentStatePageUpdate") || strings.Contains(keyboardDetect, "handleScrollerMutation") || strings.Contains(keyboardDetect, "lockTopSentinel") {
+		t.Fatal("keyboard script must not intercept history requests or adjust the native history anchor")
+	}
 	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
-	body := string(out)
-
-	requiredGuards := []string{
-		"window.__agyFetchIntercepted",
-		"window.__agyInitialLoadUntil",
-		"RequestAgentStatePageUpdate",
-		"lockTopSentinel",
-		"unlockTopSentinel",
-		`"top", "-2000px"`,
-		`"visibility", "hidden"`,
-		`"pointer-events", "none"`,
-		"application/grpc-web+proto",
-		`now - _lastPageUpdateReq < 1500`,
-	}
-
-	for _, guard := range requiredGuards {
-		if !strings.Contains(body, guard) {
-			t.Errorf("missing top sentinel / fetch storm guard %q in injected HTML", guard)
+	for _, want := range []string{`id="agy-history"`, `aria-live`, `Loading older messages`, `wrapProvider`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing history loading behavior %q", want)
 		}
-	}
-
-	// Verify that sentinel locking NEVER sets display:none (W3C DOM 0x0 bug leading to Rqb fetch storm)
-	lockSentinelRe := regexp.MustCompile(`function lockTopSentinel\([^)]*\)\s*\{([^}]+)\}`)
-	matches := lockSentinelRe.FindStringSubmatch(body)
-	if len(matches) < 2 {
-		t.Fatalf("failed to locate lockTopSentinel function in injected script")
-	}
-	if strings.Contains(matches[1], `display", "none"`) {
-		t.Errorf("lockTopSentinel MUST NOT use display:none (triggers Rqb fetch storm): %s", matches[1])
 	}
 }
