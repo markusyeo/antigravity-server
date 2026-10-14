@@ -11,19 +11,24 @@ var (
 
 	signInButtonRe = regexp.MustCompile(`onClick:\(\)=>[\r\n\s]*(?:\{[\r\n\s]*(?:\w+\(\);[\r\n\s]*)?\w+\.showLoginFlow\(\)[\r\n\s]*\}|\w+\.showLoginFlow\(\))`)
 
-	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&[a-zA-Z0-9_$]+\(\{to:"/onboarding",replace:!0,throw:!0\}\)`)
+	authServiceLoginRedirectRe     = regexp.MustCompile(`async loginWithRedirect\(([a-zA-Z0-9_$]+)\)\{`)
+	authServiceShowLoginFlowRe     = regexp.MustCompile(`async showLoginFlow\(\)\{`)
+	authServiceStubLoginRedirectRe = regexp.MustCompile(`loginWithRedirect:async\(\)=>\{console\.log\("\[AuthService\] loginWithRedirect"\)\},showLoginFlow:async\(\)=>\{console\.log\("\[AuthService\] showLoginFlow"\)\}`)
 
-	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;[a-zA-Z0-9_$]+\.preventDefault\(\);`)
+	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&[a-zA-Z0-9_$]+\(\{to:"/onboarding",(?:\s*search:[a-zA-Z0-9_$]+,)?replace:!0,throw:!0\}\)`)
+
+	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;((?:var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.shiftKey&&\([a-zA-Z0-9_$]+\.metaKey\|\|[a-zA-Z0-9_$]+\.ctrlKey\);if\([a-zA-Z0-9_$]+\.shiftKey&&![a-zA-Z0-9_$]+\)return!1;)?)[a-zA-Z0-9_$]+\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
 	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
 	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
+	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===0\)return ([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
 	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
-	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"\)`)
+	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
 
 	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
-	mobileTitlebarDeleteModalRe = regexp.MustCompile(`(c=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
+	mobileTitlebarDeleteModalRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);[\r\n\s]*return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
 	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+\}\)=>)`)
 
 	mobileKebabMenuPinArchiveRe      = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)([^\}]*)\}\)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{side:"bottom",align:"start",className:"min-w-\[180px\]",finalFocus:!1\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onClick:([a-zA-Z0-9_$]+),"data-testid":"conversation-rename-menu-item"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"edit",size:16,className:"text-secondary-foreground shrink-0"\}\),([a-zA-Z0-9_$]+)\.createElement\("span",null,"Rename"\)\),`)
@@ -32,6 +37,7 @@ var (
 	mobileHideAuxSidebarRe           = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
 	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c[^\}]*?onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy path"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":`)
+	settingsRestoreCustomizationsRe  = regexp.MustCompile(`g=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};`)
 
 	hideMicButtonRe = regexp.MustCompile(`([a-zA-Z0-9_$]+\.displayName="GutterHoverCommentButton";var )([a-zA-Z0-9_$]+)=\(`)
 
@@ -51,13 +57,13 @@ var (
 
 	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"image",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"Media",onClick:([a-zA-Z0-9_$]+)\}`)
 
-	fileUploadAcceptAllRe = regexp.MustCompile(`accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
+	fileUploadAcceptAllRe = regexp.MustCompile(`(onChange:[a-zA-Z0-9_$]+,)accept:[a-zA-Z0-9_$]+,[\r\n\s]*multiple:!0|accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
 
 	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\("",a\)!==void 0\})`)
 
-	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	initialConversationPageRe             = regexp.MustCompile(`(initialStepsSlice:[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.SliceSchema,)[a-zA-Z0-9_$]+(\),initialGeneratorMetadatasSlice:)`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
@@ -167,7 +173,7 @@ func All() []Patch {
 			Optional: true,
 			Enabled:  mobile,
 			FindRe:   mobileEnterNewlineRe,
-			Replace:  `registerCommand($1,$2=>{if(!$2)return!1;var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
+			Replace:  `registerCommand($1,$2=>{if(!$2)return!1;${3}var _t=window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches),_i=$2.isComposing||$2.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80);if(_i||(_t&&!$2.metaKey&&!$2.ctrlKey))return!1;$2.preventDefault();`,
 		},
 		// On a desktop the effort submenu opens on hover, so the row's onClick is
 		// a convenience that picks the default effort. A tap fires both, closing
@@ -213,12 +219,40 @@ func All() []Patch {
 		// the button at a page that can actually complete the flow instead of
 		// leaving it dead.
 		{
-			ID:      "sign-in-button",
-			Desc:    "Make the Settings > Account sign-in button work over the network",
-			Target:  MainJS,
-			Kind:    Regexp,
-			FindRe:  signInButtonRe,
-			Replace: `onClick:()=>{window.location.href="/__agy/signin"}`,
+			ID:       "sign-in-button",
+			Desc:     "Make the Settings > Account sign-in button work over the network",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			FindRe:   signInButtonRe,
+			Replace:  `onClick:()=>{window.location.href="/__agy/signin"}`,
+		},
+		{
+			ID:       "auth-service-login-redirect",
+			Desc:     "Redirect AuthService.loginWithRedirect to the standalone sign-in flow",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			FindRe:   authServiceLoginRedirectRe,
+			Replace:  `async loginWithRedirect($1){window.location.href="/__agy/signin";return;`,
+		},
+		{
+			ID:       "auth-service-show-login-flow",
+			Desc:     "Redirect AuthService.showLoginFlow to the standalone sign-in flow",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			FindRe:   authServiceShowLoginFlowRe,
+			Replace:  `async showLoginFlow(){window.location.href="/__agy/signin";return;`,
+		},
+		{
+			ID:       "auth-service-stub-login-redirect",
+			Desc:     "Redirect standalone AuthService stub methods to the sign-in flow",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			FindRe:   authServiceStubLoginRedirectRe,
+			Replace:  `loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}`,
 		},
 
 		// The prompt is an in-app banner shown once when notificationPermission is
@@ -306,6 +340,16 @@ func All() []Patch {
 			Replace: `onClick:${1}=>{${2}.stopPropagation();${3}(${2})||(function(){try{if(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){var _sb=document.querySelector('[data-testid="sidebar-toggle"], [data-testid="mobile-toggle-sidebar"]');if(_sb&&window.getComputedStyle(_sb).display!=="none"){_sb.click();}}}catch(e){}}(),${2}.preventDefault(),${4}(${2}))}`,
 		},
 		{
+			ID:       "mobile-project-sort-order",
+			Desc:     "Preserve custom project order when conversations are loading on mobile",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Optional: true,
+			Enabled:  mobile,
+			FindRe:   mobileProjectSortOrderRe,
+			Replace:  `if(${1}.length===0){let _raw=${2};try{let _s=JSON.parse(window.localStorage.getItem("antigravity:conversation-list-project-order")||"[]");if(Array.isArray(_s)&&_s.length>0){let _m=new Map(_s.map((k,i)=>[k,i]));_raw.sort((a,b)=>{let ia=_m.has(a.key)?_m.get(a.key):1e9,ib=_m.has(b.key)?_m.get(b.key):1e9;return ia!==ib?ia-ib:0})}}catch(e){}return _raw;}`,
+		},
+		{
 			ID:      "mobile-user-message-actions",
 			Desc:    "Make user message action buttons (Undo icon and copy) visible on touch devices",
 			Target:  MainJS,
@@ -321,7 +365,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileConversationRowActionsRe,
-			Replace: `className:${1}("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",(${2}||${3}||Boolean(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
+			Replace: `className:${1}("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",(${2}||${3}||Boolean(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))?"opacity-100":"${4}")`,
 		},
 		{
 			ID:      "mobile-titlebar-delete-hook",
@@ -419,6 +463,16 @@ func All() []Patch {
 			Replace:  `${1}$3&&$4.createElement($5.Fragment,null,$6.createElement($7,{variant:"ghost",size:"icon-sm",onClick:$8,"aria-label":`,
 		},
 		{
+			ID:       "settings-restore-customizations-tab",
+			Desc:     "Prevent standalone browser mode from deleting the Customizations tab in Settings",
+			Target:   MainJS,
+			Kind:     Regexp,
+			Enabled:  func(Options) bool { return true },
+			Optional: true,
+			FindRe:   settingsRestoreCustomizationsRe,
+			Replace:  `g=$1=>$1;`,
+		},
+		{
 			ID:      "suppress-conversation-unavailable-modal",
 			Desc:    "Suppress annoying Conversation unavailable popup when navigating away from deleted conversations",
 			Target:  MainJS,
@@ -496,7 +550,7 @@ func All() []Patch {
 			Target:  MainJS,
 			Kind:    Regexp,
 			FindRe:  fileUploadAcceptAllRe,
-			Replace: `accept:"*/*",multiple:!0`,
+			Replace: `${1}accept:"*/*",multiple:!0`,
 		},
 		{
 			ID:      "file-upload-input-reset",
@@ -1404,6 +1458,8 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
 
   var suppressComposerUntil = 0;
   var lastComposerTouchTime = 0;
+  var lastDialogBlurAt = -Infinity;
+  var DIALOG_CONTAINER_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"], [data-radix-popper-content-wrapper], .aux-drawer-popup';
 
   document.addEventListener("touchstart", function (e) {
     var t = e.target;
@@ -1457,13 +1513,17 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
 
     if (t && isTextInput(t)) {
-      // On mobile devices, if the main agent composer is auto-focused immediately after question submission,
-      // blur it so the virtual keyboard does not pop up unexpectedly.
+      var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500) &&
+        !(t.closest && t.closest(DIALOG_CONTAINER_SELECTOR));
+
+      // On mobile devices, if the main agent composer is auto-focused immediately after question submission
+      // or when closing a dialog (such as Settings), blur it so the virtual keyboard does not pop up unexpectedly.
       // Deliberate user touch on the composer and inputs outside the composer are never blocked!
-      if (isMobileDevice() && performance.now() < suppressComposerUntil) {
+      if (isMobileDevice()) {
+        var now = performance.now();
         var isMainComposer = t.closest && t.closest('[data-testid="agent-input-box"]');
-        if (isMainComposer) {
-          var isDirectUserTap = (performance.now() - lastComposerTouchTime) < 500;
+        if (isMainComposer && (now < suppressComposerUntil || returnedFromDialog)) {
+          var isDirectUserTap = (now - lastComposerTouchTime) < 500;
           if (!isDirectUserTap) {
             if (t.blur) t.blur();
             return;
@@ -1475,7 +1535,7 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
       predicted = loadPredicted();
       // Only apply speculative shrink on mobile phones in portrait mode.
       // Tablets (iPad) and hardware keyboard users must NOT speculatively shrink before visualViewport reports.
-      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait()) {
+      if (predicted >= 100 && applied === 0 && isMobileDevice() && isPortrait() && !returnedFromDialog) {
         holdUntil = performance.now() + 500;
         goal = from = predicted;
         goalTop = fromTop = 0;
@@ -1486,7 +1546,20 @@ const keyboardDetect = `<script id="agy-keyboard-detect">
     }
   });
 
-  window.addEventListener("focusout", function () {
+  document.addEventListener("pointerdown", function (e) {
+    var t = e.target;
+    if (document.querySelector(DIALOG_CONTAINER_SELECTOR)) {
+      if (t && (!t.closest || !t.closest(DIALOG_CONTAINER_SELECTOR) || t.closest('[data-testid="modal-close"]') || t.closest('button[aria-label="Close"]'))) {
+        lastDialogBlurAt = performance.now();
+      }
+    }
+  }, true);
+
+  window.addEventListener("focusout", function (e) {
+    var t = e && e.target;
+    if (t && t.closest && t.closest(DIALOG_CONTAINER_SELECTOR)) {
+      lastDialogBlurAt = performance.now();
+    }
     if (hasActiveQuestion) return;
     track(500);
   });
@@ -1871,7 +1944,7 @@ const signInBanner = `<style id="agy-signin-banner-style">
   function check() {
     fetch("/__agy/api/signin/status", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d && !d.signedIn) start(); })
+      .then(function (d) { if (d && (d.needsSignIn !== undefined ? d.needsSignIn : !d.signedIn)) start(); })
       .catch(function () {});
   }
 
@@ -2166,7 +2239,7 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
 (function () {
   var lastPingSuccess = 0;
   var activePingPromise = null;
-  var MAX_RELOAD_ATTEMPTS = 3;
+  var MAX_RELOAD_ATTEMPTS = 2;
   var lastConversationActivity = Date.now();
 
   // Only snapshot progress for the visible conversation postpones recovery.
@@ -2330,8 +2403,14 @@ const connectionWatchdogScript = `<script id="agy-connection-watchdog">
           pingServer(function () {
             sessionStorage.setItem("agy_stuck_reload", Date.now().toString());
             sessionStorage.setItem("agy_stuck_reload_count", (reloadCount + 1).toString());
-            console.warn("[agy-watchdog] Conversation spinner stuck > 30s with idle network and live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
-            window.location.reload();
+            var isConvoRoute = window.location.pathname.indexOf("/c/") === 0;
+            if (reloadCount >= 1 && isConvoRoute) {
+              console.warn("[agy-watchdog] Conversation still stuck after reload on " + window.location.pathname + ", redirecting to home");
+              window.location.replace("/");
+            } else {
+              console.warn("[agy-watchdog] Conversation spinner stuck > 30s with idle network and live server (attempt " + (reloadCount + 1) + "/" + MAX_RELOAD_ATTEMPTS + "), recovering connection via clean reload");
+              window.location.reload();
+            }
           });
         }
       }

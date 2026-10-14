@@ -58,8 +58,8 @@ func TestWarmBundleReusesRepresentationsAndRefreshesChangedUpstream(t *testing.T
 	if resp.ContentLength != int64(len(prepared.gzip)) {
 		t.Fatal("incorrect compressed length")
 	}
-	if resp.Header.Get("ETag") != "" {
-		t.Fatal("upstream validator survived rewriting")
+	if got := resp.Header.Get("ETag"); got == "" || got == `"original"` {
+		t.Fatalf("upstream validator survived rewriting or ETag missing: %q", got)
 	}
 	if !strings.Contains(content, "window.location.origin") {
 		t.Fatal("warmup did not patch the bundle")

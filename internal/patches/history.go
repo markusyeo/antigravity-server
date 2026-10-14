@@ -16,9 +16,9 @@ var historyManualAnchorRe = regexp.MustCompile(
 		`=\(\{sectionRefsMap:(?P<sections>` + historyIdentifier +
 		`),requestPageUpdate:` + historyIdentifier +
 		`,currentItemsSlice:.*?\{snapshot:(?P<snapshot>` + historyIdentifier +
-		`),tryRestoreSnapshot:.*?if\((?P<normalize>` + historyIdentifier +
+		`),tryRestoreSnapshot:.*?(?:if\(|=)(?P<normalize>` + historyIdentifier +
 		`)\(` + historyIdentifier + `,\s*` + historyIdentifier +
-		`\)\.startIndex!==.*?let ` + historyIdentifier +
+		`\)\.startIndex(?:!==|.*?\.startIndex!==).*?let ` + historyIdentifier +
 		`=(?P<anchor>` + historyIdentifier + `)\(` + historyIdentifier +
 		`\);` + historyIdentifier + `&&` + historyIdentifier +
 		`\(.*?var ` + historyIdentifier + `=\(0,` + historyIdentifier +

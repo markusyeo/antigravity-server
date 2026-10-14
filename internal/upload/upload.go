@@ -142,8 +142,7 @@ func (u *Uploader) handleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			destPath := filepath.Join(targetDir, fileName)
-			outFile, err := os.Create(destPath)
+			outFile, finalName, destPath, err := createUniqueFile(targetDir, fileName)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, Response{Error: fmt.Sprintf("cannot create file: %v", err)})
 				return
@@ -157,10 +156,10 @@ func (u *Uploader) handleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			relPath := filepath.Join(relativePrefix, fileName)
+			relPath := filepath.Join(relativePrefix, finalName)
 			savedResponse = &Response{
 				Success:      true,
-				FileName:     fileName,
+				FileName:     finalName,
 				RelativePath: relPath,
 				FullPath:     destPath,
 				Size:         written,
@@ -174,6 +173,30 @@ func (u *Uploader) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, *savedResponse)
+}
+
+func createUniqueFile(dir, fileName string) (*os.File, string, string, error) {
+	ext := filepath.Ext(fileName)
+	stem := strings.TrimSuffix(fileName, ext)
+	if stem == "" {
+		stem = "upload"
+	}
+
+	for attempt := 0; attempt < 1000; attempt++ {
+		candidate := fileName
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s_%d%s", stem, attempt+1, ext)
+		}
+		destPath := filepath.Join(dir, candidate)
+		f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if err == nil {
+			return f, candidate, destPath, nil
+		}
+		if !os.IsExist(err) {
+			return nil, "", "", err
+		}
+	}
+	return nil, "", "", fmt.Errorf("too many files with name %q", fileName)
 }
 
 func (u *Uploader) resolveTargetDir(projectPath, conversationID string) (targetDir string, relativePrefix string, err error) {

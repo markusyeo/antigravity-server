@@ -16,6 +16,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,9 @@ import (
 // DefaultOpenAfter is how long a request may stay open before it is reported
 // as a long-lived stream.
 const DefaultOpenAfter = 5 * time.Second
+
+// DefaultMaxBytes caps a single access log file before rotating to "<path>.1".
+const DefaultMaxBytes int64 = 16 << 20
 
 // Logger writes access lines to one destination.
 type Logger struct {
@@ -200,3 +204,82 @@ func (r *recorder) Flush() {
 }
 
 func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+type rotatingFile struct {
+	mu       sync.Mutex
+	path     string
+	maxBytes int64
+	file     *os.File
+	size     int64
+}
+
+// OpenFile opens a size-bounded access log file that rotates to "<path>.1"
+// once it reaches maxBytes (or DefaultMaxBytes when maxBytes <= 0).
+func OpenFile(path string, maxBytes int64) (io.WriteCloser, error) {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBytes
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	var size int64
+	if info, err := f.Stat(); err == nil {
+		size = info.Size()
+	}
+	rf := &rotatingFile{
+		path:     path,
+		maxBytes: maxBytes,
+		file:     f,
+		size:     size,
+	}
+	if rf.size >= rf.maxBytes {
+		if err := rf.rotateLocked(); err != nil {
+			_ = rf.file.Close()
+			return nil, err
+		}
+	}
+	return rf, nil
+}
+
+func (rf *rotatingFile) Write(p []byte) (int, error) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.file == nil {
+		return 0, os.ErrClosed
+	}
+	if rf.size > 0 && rf.size+int64(len(p)) > rf.maxBytes {
+		if err := rf.rotateLocked(); err != nil {
+			return 0, err
+		}
+	}
+	n, err := rf.file.Write(p)
+	rf.size += int64(n)
+	return n, err
+}
+
+func (rf *rotatingFile) rotateLocked() error {
+	if rf.file != nil {
+		_ = rf.file.Close()
+		rf.file = nil
+	}
+	_ = os.Rename(rf.path, rf.path+".1")
+	f, err := os.OpenFile(rf.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	rf.file = f
+	rf.size = 0
+	return nil
+}
+
+func (rf *rotatingFile) Close() error {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.file == nil {
+		return nil
+	}
+	err := rf.file.Close()
+	rf.file = nil
+	return err
+}

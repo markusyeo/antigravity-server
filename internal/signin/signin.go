@@ -36,7 +36,13 @@ const (
 	// loginTimeout bounds the Login RPC, which blocks until the callback arrives.
 	loginTimeout = 15 * time.Minute
 	// sessionTTL is how long a captured URL stays usable before we start over.
-	sessionTTL = 14 * time.Minute
+	// Keep this short so that if the language server restarts (e.g., on OOM or update)
+	// and loses its callback listener, a retry does not stay stuck for 14 minutes.
+	sessionTTL = 2 * time.Minute
+	// authCachePositiveTTL caches confirmed signed-in status to avoid redundant RPCs.
+	authCachePositiveTTL = 30 * time.Second
+	// authCacheNegativeTTL caches signed-out / unknown status briefly during startup.
+	authCacheNegativeTTL = 3 * time.Second
 )
 
 var (
@@ -63,6 +69,11 @@ type Coordinator struct {
 
 	mu      sync.Mutex
 	pending *session
+
+	cacheMu          sync.Mutex
+	cachedSignedIn   bool
+	cachedKnownState bool
+	cacheExpiresAt   time.Time
 }
 
 // New returns a Coordinator. urlFile is where the browser shim records URLs; it
@@ -80,10 +91,52 @@ func (c *Coordinator) Available() bool {
 
 // SignedIn reports whether Antigravity already holds valid credentials.
 func (c *Coordinator) SignedIn(ctx context.Context) bool {
-	if c.instance == nil {
+	signedIn, _ := c.authState(ctx)
+	return signedIn
+}
+
+// NeedsSignIn reports whether the language server responded and explicitly
+// confirmed that valid credentials are missing. Unlike !SignedIn(ctx), it
+// returns false on transient RPC failures or startup delays so callers do not
+// redirect or show a sign-in prompt while the language server is merely busy.
+func (c *Coordinator) NeedsSignIn(ctx context.Context) bool {
+	if !c.Available() {
 		return false
 	}
-	return c.instance.SignedIn(ctx)
+	signedIn, known := c.authState(ctx)
+	return known && !signedIn
+}
+
+func (c *Coordinator) authState(ctx context.Context) (signedIn bool, known bool) {
+	if c.instance == nil {
+		return false, false
+	}
+
+	now := time.Now()
+	c.cacheMu.Lock()
+	if now.Before(c.cacheExpiresAt) {
+		s, k := c.cachedSignedIn, c.cachedKnownState
+		c.cacheMu.Unlock()
+		return s, k
+	}
+	c.cacheMu.Unlock()
+
+	ok, err := c.instance.AuthStatus(ctx)
+	known = err == nil
+	signedIn = known && ok
+
+	ttl := authCacheNegativeTTL
+	if signedIn {
+		ttl = authCachePositiveTTL
+	}
+
+	c.cacheMu.Lock()
+	c.cachedSignedIn = signedIn
+	c.cachedKnownState = known
+	c.cacheExpiresAt = time.Now().Add(ttl)
+	c.cacheMu.Unlock()
+
+	return signedIn, known
 }
 
 // Begin starts a sign-in attempt and returns the Google consent URL to open. If
@@ -205,12 +258,20 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	}
 
 	if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
+		// If the callback listener is gone (e.g. language server restarted),
+		// discard the stale session so the user's next attempt gets a fresh port.
+		c.finish()
 		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
 	}
 
 	// The Login RPC needs a moment to exchange the code for a token.
 	for i := 0; i < 20; i++ {
 		if c.instance.SignedIn(ctx) {
+			c.cacheMu.Lock()
+			c.cachedSignedIn = true
+			c.cachedKnownState = true
+			c.cacheExpiresAt = time.Now().Add(authCachePositiveTTL)
+			c.cacheMu.Unlock()
 			c.finish()
 			return nil
 		}

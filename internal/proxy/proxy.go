@@ -13,8 +13,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -34,6 +37,7 @@ type ReportFunc func(target patches.Target, report patches.Report)
 type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
+	PublicURL       string
 	Patch           patches.Options
 	OnReport        ReportFunc
 }
@@ -45,13 +49,14 @@ type Proxy struct {
 	reported       sync.Map
 	activeConns    atomic.Int64
 	lastActivityNs atomic.Int64
-	bundleMu       sync.Mutex
+	bundleMu       sync.RWMutex
 	bundle         *bundleCache
 	transport      http.RoundTripper
 }
 
 type bundleCache struct {
 	digest         [32]byte
+	etag           string
 	identity, gzip []byte
 }
 
@@ -137,6 +142,36 @@ func (p *Proxy) Handler() http.Handler {
 			p.activeConns.Add(-1)
 			p.touchActivity()
 		}()
+
+		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
+			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
+			return
+		}
+
+		if r.URL.Path == "/main.js" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			if b := p.cachedBundle(); b != nil {
+				if etagMatches(r.Header.Get("If-None-Match"), b.etag) {
+					setBundleValidators(w.Header(), b.etag)
+					w.Header().Add("Vary", "Accept-Encoding")
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				if r.Method == http.MethodHead {
+					setBundleValidators(w.Header(), b.etag)
+					w.Header().Add("Vary", "Accept-Encoding")
+					payload := b.identity
+					if acceptsGzip(r) && len(payload) >= minCompressBytes {
+						payload = b.gzip
+						w.Header().Set("Content-Encoding", "gzip")
+					}
+					w.Header().Set("Content-Type", "application/javascript")
+					w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			}
+		}
+
 		p.handler.ServeHTTP(w, r)
 	})
 }
@@ -221,6 +256,7 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	started := time.Now()
 	var patched []byte
+	var tag string
 	if target == patches.MainJS {
 		digest := sha256.Sum256(body)
 		p.bundleMu.Lock()
@@ -231,9 +267,15 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 			writer := gzip.NewWriter(&compressed)
 			_, _ = writer.Write(identity)
 			_ = writer.Close()
-			p.bundle = &bundleCache{digest: digest, identity: identity, gzip: compressed.Bytes()}
+			p.bundle = &bundleCache{
+				digest:   digest,
+				etag:     bundleETag(identity),
+				identity: identity,
+				gzip:     compressed.Bytes(),
+			}
 		}
 		patched = p.bundle.identity
+		tag = p.bundle.etag
 		resp.Header.Add("Vary", "Accept-Encoding")
 		if timing, ok := resp.Request.Context().Value(requestTimingKey{}).(requestTiming); ok && timing.gzip && len(patched) >= minCompressBytes {
 			patched = p.bundle.gzip
@@ -256,13 +298,124 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	if target == patches.HTML {
 		resp.Header.Set("Cache-Control", "no-store")
-	} else if resp.Request.URL.Query().Get("agy") != "" {
-		resp.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
-		resp.Header.Set("Cache-Control", "no-store")
+		setBundleValidators(resp.Header, tag)
 	}
 
 	return nil
+}
+
+func (p *Proxy) cachedBundle() *bundleCache {
+	p.bundleMu.RLock()
+	defer p.bundleMu.RUnlock()
+	return p.bundle
+}
+
+const bundleCacheControl = "private, no-cache"
+
+func bundleETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+func setBundleValidators(h http.Header, tag string) {
+	h.Set("Cache-Control", bundleCacheControl)
+	h.Set("ETag", tag)
+	h.Del("Last-Modified")
+}
+
+func etagMatches(header, tag string) bool {
+	if header == "" || tag == "" {
+		return false
+	}
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimPrefix(strings.TrimSpace(part), "W/")
+		if part == "*" || part == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+func (p *Proxy) sameOriginUpgrade(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		log.Printf("[proxy] rejecting WebSocket upgrade: malformed Origin %q", origin)
+		return false
+	}
+	originHost := u.Hostname()
+	originPort := u.Port()
+	if originPort == "" {
+		if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
+			originPort = "443"
+		} else if strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "ws") {
+			originPort = "80"
+		}
+	}
+
+	candidates := []string{
+		r.Host,
+		firstValue(r.Header.Get("X-Forwarded-Host")),
+	}
+	if p.opts.PublicURL != "" {
+		if pu, err := url.Parse(p.opts.PublicURL); err == nil && pu.Host != "" {
+			candidates = append(candidates, pu.Host)
+		}
+	}
+
+	verifiable := false
+	for _, h := range candidates {
+		candHost, candPort := splitHostMaybePort(h)
+		if candHost == "" {
+			continue
+		}
+		if strings.EqualFold(candHost, originHost) {
+			if candPort == "" || candPort == originPort {
+				return true
+			}
+		}
+		if !isLoopbackName(candHost) {
+			verifiable = true
+		}
+	}
+
+	if !verifiable {
+		log.Printf("[proxy] warning: WebSocket upgrade from Origin %q accepted without Host verification (reverse proxy forwarded no external Host header)", origin)
+		return true
+	}
+
+	log.Printf("[proxy] rejected cross-origin WebSocket upgrade: Origin=%q does not match Host=%q or X-Forwarded-Host=%q. Ensure your reverse proxy forwards Host (e.g. proxy_set_header Host $host;)", origin, r.Host, r.Header.Get("X-Forwarded-Host"))
+	return false
+}
+
+func splitHostMaybePort(hostport string) (string, string) {
+	if h, port, err := net.SplitHostPort(hostport); err == nil {
+		return h, port
+	}
+	return strings.Trim(hostport, "[]"), ""
+}
+
+func firstValue(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+func isLoopbackName(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *Proxy) report(target patches.Target, report patches.Report) {

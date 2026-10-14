@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/AFSlayer/antigravity-server/internal/lsproc"
@@ -28,7 +29,13 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		t.Fatalf("fetch /: %v", err)
 	}
 
+	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
+	opts.CacheKey = CacheKey("test", opts)
+
 	for _, p := range All() {
+		if p.Enabled != nil && !p.Enabled(opts) {
+			continue
+		}
 		body := mainJS
 		if p.Target == HTML {
 			body = indexHTML
@@ -46,9 +53,6 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 		}
 	}
 
-	opts := Options{MobileUX: true, WorkspaceRoot: "/tmp/workspace"}
-	opts.CacheKey = CacheKey("test", opts)
-
 	for _, target := range []struct {
 		body   []byte
 		target Target
@@ -60,8 +64,10 @@ func TestAnchorsMatchLiveBundle(t *testing.T) {
 			}
 		}
 		if target.target == MainJS {
-			tmp := "/tmp/debug_patched_bundle.js"
-			_ = os.WriteFile(tmp, patched, 0644)
+			tmp := filepath.Join(t.TempDir(), "patched_bundle.js")
+			if err := os.WriteFile(tmp, patched, 0644); err != nil {
+				t.Fatalf("write temp bundle: %v", err)
+			}
 			cmd := exec.Command("node", "--check", tmp)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("JavaScript Syntax Error in patched bundle: %v\nOutput: %s", err, string(out))

@@ -50,6 +50,9 @@ var regexpFixtures = map[string]string{
 	"hide-mic-button":                           `uz.displayName="GutterHoverCommentButton";var vz=(`,
 	"hide-user-profile-button":                  `function wmb({className:a=""}={}){return x.createElement("a",{href:"#",onClick:b=>{b.preventDefault()},className:` + "`w-6 h-6 rounded-full overflow-hidden shrink-0 flex items-center justify-center bg-transparent text-muted-foreground ${a}`" + `,"aria-label":"User Profile (Placeholder)"`,
 	"sign-in-button":                            `rightElement:x.createElement(tz,{variant:"primary",onClick:()=>` + "\n" + `b.showLoginFlow()},"Sign In")`,
+	"auth-service-login-redirect":               `async loginWithRedirect(a){var b=await this.getAuthUrl(a);`,
+	"auth-service-show-login-flow":              `async showLoginFlow(){return this.loginWithRedirect()}`,
+	"auth-service-stub-login-redirect":          `loginWithRedirect:async()=>{console.log("[AuthService] loginWithRedirect")},showLoginFlow:async()=>{console.log("[AuthService] showLoginFlow")}`,
 	"mobile-skip-notification-prompt":           `var e=!!this.storageService.get("didAskForNotificationPermission");`,
 	"mobile-new-convo-view":                     `const tub=()=>{var a=yM(),b=IT();return(0,x.useCallback)((c,e)=>{b(HT.map(f=>({trigger:f,ran:!1})));a(c,{section:e})},[a,b])};` + "\n" + `var uub=()=>{var a=tub(),{q:b}=dM({strict:!1});return x.createElement("div",{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"},x.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},x.createElement(sub,{surface:"background"})),`,
 	"mobile-new-convo-header":                   `CM=()=>QL({select:a=>a.location.pathname==="/"})`,
@@ -58,6 +61,7 @@ var regexpFixtures = map[string]string{
 	"mobile-project-header-actions":             `className:Pm("absolute right-1 top-0 flex h-full items-center gap-1",k||t?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100")`,
 	"mobile-project-kebab-menu":                 `,z=(0,y.useContext)(DEb),A=lK()&&z!==null,`,
 	"mobile-project-add-click-close-sidebar":    `onClick:D=>{D.stopPropagation();Skb(D)||(D.preventDefault(),d(D))}`,
+	"mobile-project-sort-order":                 `if(a.length===0)return J2e(c,d,e,f,g).map(H2e);`,
 	"mobile-user-message-actions":               `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
 	"mobile-conversation-row-actions":           `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 	"mobile-titlebar-delete-hook":               `var {handleArchive:v,handleRestore:w,handlePin:y,handleUnpin:z,isArchiveSupported:A,handleShare:B,showShareModal:C,shareUrl:D,handleCloseShareModal:E,onShare:F}=PX(r??"")`,
@@ -70,6 +74,7 @@ var regexpFixtures = map[string]string{
 	"mobile-hide-aux-sidebar":                   `G.createElement(bZ,{iconName:"dock_to_bottom",onClick:m,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"})`,
 	"settings-rules-editor":                     `var WS=({name:a,path:b,onCopyPath:c,description:d,badge:f,disabled:g=!1,isLast:h=!1,onEdit:k,editTitle:l="Edit",onDelete:m,deleteTitle:n="Delete",onToggle:p,toggleChecked:r,toggleDisabled:t=!1,expandableContent:v})=>{var w=k||m||p,[y,z]=(0,G.useState)(!1),`,
 	"settings-customizations-show-edit":         `"Copy path")),!A&&n&&z.createElement(z.Fragment,null,Yz.createElement(Yz,{variant:"ghost",size:"icon-sm",onClick:n,"aria-label":`,
+	"settings-restore-customizations-tab":       `g=b=>{if(!a)return b;b=new Map(b);b.delete("Customizations");` + "\n" + `return b};`,
 	"suppress-conversation-unavailable-modal":   `A({tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found."})`,
 	"force-disable-telemetry":                   `return{telemetryEnabled:f,marketingEmailsEnabled:`,
 	"virtualization-disable-contraction":        `contractionSafetyPx:3E3,outerRadiusPx:5E3`,
@@ -192,6 +197,7 @@ func TestMobileUXDisabledSkipsMobilePatches(t *testing.T) {
 		"mobile-project-header-actions",
 		"mobile-project-kebab-menu",
 		"mobile-project-add-click-close-sidebar",
+		"mobile-project-sort-order",
 		"mobile-user-message-actions",
 		"mobile-conversation-row-actions",
 		"mobile-titlebar-delete-hook",
@@ -528,7 +534,7 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 
 	requiredGuards := []string{
 		"activePingPromise",
-		"MAX_RELOAD_ATTEMPTS = 3",
+		"MAX_RELOAD_ATTEMPTS = 2",
 		`sessionStorage.getItem("agy_stuck_reload_count")`,
 		`sessionStorage.removeItem("agy_stuck_reload_count")`,
 		`sessionStorage.removeItem("agy_stuck_reload")`,
@@ -560,9 +566,27 @@ func TestConnectionWatchdogScriptIntegrity(t *testing.T) {
 		t.Errorf("watchdogObserver should not observe characterData: %s", matches[1])
 	}
 
-	// Verify that window.location.reload() is strictly wrapped inside pingServer callback
-	if !strings.Contains(body, "pingServer(function () {") || !strings.Contains(body, "window.location.reload();") {
-		t.Errorf("window.location.reload() must be protected inside pingServer callback")
+	// Verify that window.location.reload() and fallback redirect are strictly wrapped inside pingServer callback
+	if !strings.Contains(body, "pingServer(function () {") || !strings.Contains(body, "window.location.reload();") || !strings.Contains(body, `window.location.replace("/")`) {
+		t.Errorf("window.location.reload() and fallback redirect must be protected inside pingServer callback")
+	}
+}
+
+func TestKeyboardDetectSuppressesComposerFocusAfterDialogClose(t *testing.T) {
+	out, _ := Apply(HTML, []byte("<head></head><body></body>"), fullOptions())
+	body := string(out)
+
+	required := []string{
+		"var lastDialogBlurAt = -Infinity;",
+		"DIALOG_CONTAINER_SELECTOR",
+		"var returnedFromDialog = (performance.now() - lastDialogBlurAt < 500)",
+		"isPortrait() && !returnedFromDialog",
+		"if (t.blur) t.blur();",
+	}
+	for _, s := range required {
+		if !strings.Contains(body, s) {
+			t.Errorf("missing dialog blur guard %q in mobile keyboard script", s)
+		}
 	}
 }
 
@@ -575,5 +599,46 @@ func TestHistoryUsesNativePaging(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("missing history loading behavior %q", want)
 		}
+	}
+}
+
+func TestAuthServiceLoginRedirectPatch(t *testing.T) {
+	classInput := `async loginWithRedirect(a){var b=d,c=d;try{`
+	if !authServiceLoginRedirectRe.MatchString(classInput) {
+		t.Fatalf("authServiceLoginRedirectRe failed to match class method")
+	}
+	classReplaced := authServiceLoginRedirectRe.ReplaceAllString(classInput, `async loginWithRedirect($1){window.location.href="/__agy/signin";return;`)
+	if classReplaced != `async loginWithRedirect(a){window.location.href="/__agy/signin";return;var b=d,c=d;try{` {
+		t.Fatalf("unexpected class replacement: %s", classReplaced)
+	}
+
+	flowInput := `async showLoginFlow(){this._onDidRequestLoginFlow.fire()}`
+	if !authServiceShowLoginFlowRe.MatchString(flowInput) {
+		t.Fatalf("authServiceShowLoginFlowRe failed to match showLoginFlow method")
+	}
+	flowReplaced := authServiceShowLoginFlowRe.ReplaceAllString(flowInput, `async showLoginFlow(){window.location.href="/__agy/signin";return;`)
+	if flowReplaced != `async showLoginFlow(){window.location.href="/__agy/signin";return;this._onDidRequestLoginFlow.fire()}` {
+		t.Fatalf("unexpected showLoginFlow replacement: %s", flowReplaced)
+	}
+
+	stubInput := `const auth={loginWithRedirect:async()=>{console.log("[AuthService] loginWithRedirect")},showLoginFlow:async()=>{console.log("[AuthService] showLoginFlow")}};`
+	if !authServiceStubLoginRedirectRe.MatchString(stubInput) {
+		t.Fatalf("authServiceStubLoginRedirectRe failed to match stub input")
+	}
+	stubReplaced := authServiceStubLoginRedirectRe.ReplaceAllString(stubInput, `loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}`)
+	expected := `const auth={loginWithRedirect:async()=>{window.location.href="/__agy/signin"},showLoginFlow:async()=>{window.location.href="/__agy/signin"}};`
+	if stubReplaced != expected {
+		t.Fatalf("unexpected stub replacement output: %s", stubReplaced)
+	}
+}
+
+func TestSettingsRestoreCustomizationsPatch(t *testing.T) {
+	settingsInput := `h.length>0&&k.set(l.screen,{sections:h})):k.set(l.screen,h);h=k}else h=g;g=l=>{if(!b)return l;l=new Map(l);l.delete("Customizations");` + "\n" + `return l};if(!c.size)return g(h);`
+	if !settingsRestoreCustomizationsRe.MatchString(settingsInput) {
+		t.Fatalf("settingsRestoreCustomizationsRe failed to match settings filter input")
+	}
+	settingsReplaced := settingsRestoreCustomizationsRe.ReplaceAllString(settingsInput, `g=$1=>$1;`)
+	if !strings.Contains(settingsReplaced, `h=k}else h=g;g=l=>l;if(!c.size)return g(h);`) {
+		t.Fatalf("unexpected settings restore replacement output: %s", settingsReplaced)
 	}
 }
