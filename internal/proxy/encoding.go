@@ -26,7 +26,7 @@ const minCompressBytes = 1024
 
 var gzipPool = sync.Pool{
 	New: func() any {
-		w, _ := gzip.NewWriterLevel(nil, gzip.DefaultCompression)
+		w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
 		return w
 	},
 }

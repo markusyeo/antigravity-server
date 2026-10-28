@@ -25,17 +25,29 @@ type asset struct {
 }
 
 var routes = map[string]asset{
-	"/favicon.ico":                       {"files/favicon.ico", "image/x-icon"},
-	"/apple-touch-icon.png":              {"files/apple-touch-icon.png", "image/png"},
-	"/apple-touch-icon-precomposed.png":  {"files/apple-touch-icon.png", "image/png"},
-	"/assets/image/antigravity-logo.png": {"files/logo.png", "image/png"},
+	"/favicon.ico":                              {"files/favicon.ico", "image/x-icon"},
+	"/apple-touch-icon.png":                     {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-precomposed.png":         {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-120x120.png":             {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-120x120-precomposed.png": {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-152x152.png":             {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-152x152-precomposed.png": {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-167x167.png":             {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-167x167-precomposed.png": {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-180x180.png":             {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-180x180-precomposed.png": {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-240x240.png":             {"files/apple-touch-icon.png", "image/png"},
+	"/apple-touch-icon-240x240-precomposed.png": {"files/apple-touch-icon.png", "image/png"},
+	"/assets/image/antigravity-logo.png":        {"files/logo.png", "image/png"},
 }
 
 // IsPublicPath reports whether a path may be served without authentication. These
 // are static icons, which carry nothing sensitive but must load on the login page.
 func IsPublicPath(path string) bool {
-	_, ok := routes[path]
-	return ok
+	if _, ok := routes[path]; ok {
+		return true
+	}
+	return strings.HasPrefix(path, "/apple-touch-icon") && strings.HasSuffix(path, ".png")
 }
 
 // Paths lists every route this package serves, for mounting on a mux.
@@ -51,6 +63,10 @@ func Paths() []string {
 func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a, ok := routes[r.URL.Path]
+		if !ok && strings.HasPrefix(r.URL.Path, "/apple-touch-icon") && strings.HasSuffix(r.URL.Path, ".png") {
+			a = asset{"files/apple-touch-icon.png", "image/png"}
+			ok = true
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
