@@ -2,6 +2,7 @@ package patches
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 )
 
@@ -15,18 +16,31 @@ var (
 	authServiceShowLoginFlowRe     = regexp.MustCompile(`async showLoginFlow\(\)\{`)
 	authServiceStubLoginRedirectRe = regexp.MustCompile(`loginWithRedirect:async\(\)=>\{console\.log\("\[AuthService\] loginWithRedirect"\)\},showLoginFlow:async\(\)=>\{console\.log\("\[AuthService\] showLoginFlow"\)\}`)
 
-	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&[a-zA-Z0-9_$]+\(\{to:"/onboarding",(?:\s*search:[a-zA-Z0-9_$]+,)?replace:!0,throw:!0\}\)`)
+	skipOnboardingRe = regexp.MustCompile(`c\.hasOnboardingScreens&&[a-zA-Z0-9_$]+!==2&&(?:\([a-zA-Z0-9_$]+\(\),[a-zA-Z0-9_$]+\(\{to:"/onboarding",(?:\s*search:[a-zA-Z0-9_$]+,)?replace:!0,throw:!0\}\)\)|[a-zA-Z0-9_$]+\(\{to:"/onboarding",(?:\s*search:[a-zA-Z0-9_$]+,)?replace:!0,throw:!0\}\))`)
 
 	mobileEnterNewlineRe                = regexp.MustCompile(`registerCommand\(([a-zA-Z0-9_$]+),([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return!1;((?:var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.shiftKey&&\([a-zA-Z0-9_$]+\.metaKey\|\|[a-zA-Z0-9_$]+\.ctrlKey\);if\([a-zA-Z0-9_$]+\.shiftKey&&![a-zA-Z0-9_$]+\)return!1;)?)[a-zA-Z0-9_$]+\.preventDefault\(\);`)
 	mobileProjectAddButtonRe            = regexp.MustCompile(`if\((\w+)==="project"\|\|(\w+)==="environment"\|\|(\w+)==="status"\)\{let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\?void 0:([a-zA-Z0-9_$]+)==="project"\?"New Conversation in Project":([a-zA-Z0-9_$]+)==="environment"\?"New Conversation in Workspace":[\r\n\s]*void 0`)
-	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
-	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,`)
+	mobileProjectHeaderActionsRe        = regexp.MustCompile(`className:[a-zA-Z0-9_$]+\("absolute right-1 top-0 flex h-full items-center gap-1",[\r\n\s]*([a-zA-Z0-9_$]+)\|\|([a-zA-Z0-9_$]+)\?"opacity-100":"opacity-0 group-hover\/header:opacity-100 group-focus-within\/header:opacity-100"\)`)
+	mobileProjectKebabMenuRe            = regexp.MustCompile(`,([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useContext\)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=[a-zA-Z0-9_$]+\(\)&&[a-zA-Z0-9_$]+!==null,|(function [a-zA-Z0-9_$]+\(a\)\{var \{isOpen:b,onOpenChange:c,ariaLabel:[a-zA-Z0-9_$]+,sortMode:f,onSortModeChange:g,size:h="icon"\}=a;a=[a-zA-Z0-9_$]+\(a\);return )[a-zA-Z0-9_$]+\(\)\|\|(a\.length===0&&!g\?null:)`)
 	mobileProjectAddClickCloseSidebarRe = regexp.MustCompile(`onClick:([a-zA-Z0-9_$]+)=>[\r\n\s]*\{([a-zA-Z0-9_$]+)\.stopPropagation\(\);([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\|\|\([a-zA-Z0-9_$]+\.preventDefault\(\),([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\)\)\}`)
 	mobileProjectSortOrderRe            = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\.length===0\)return ([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+,([a-zA-Z0-9_$]+),[a-zA-Z0-9_$]+(?:,[a-zA-Z0-9_$]+)?\)\.map\([a-zA-Z0-9_$]+\));`)
-	mobileUserMessageActionsRe          = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
-	mobileConversationRowActionsRe      = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
+	mobileProjectSettingsExportRe       = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(\)\{var a=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),b=[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\),c=[a-zA-Z0-9_$]+\(\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{logEvent:f\}=[a-zA-Z0-9_$]+\(\),\[g,h\]=[a-zA-Z0-9_$]+\("main"\)`)
+	mobileSettingsProjectsRe            = regexp.MustCompile(
+		`(var [a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),(?:\{settingsFeature:b\}=\(0,[a-zA-Z0-9_$]+\.useContext\)\([a-zA-Z0-9_$]+\),c=!![a-zA-Z0-9_$]+\(\)\.get\("settings"\)\?\.hideShortcuts,|b=[a-zA-Z0-9_$]+\(\),c=b\.get\("settingsFeature"\)\?\?[a-zA-Z0-9_$]+\.settingsFeature;b=!!b\.get\("settings"\)\?\.hideShortcuts;var |[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\);[a-zA-Z0-9_$]+=!![a-zA-Z0-9_$]+\.get\("settings"\)\?\.hideShortcuts;var )\{sharedNavItems:[a-zA-Z0-9_$]+,globalScreens:f,workspaces:g,showWorkspacesSection:h\}=[a-zA-Z0-9_$]+\(\);` +
+			`[bc]=\[\.\.\.[a-zA-Z0-9_$]+\.filter\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+!=="Account"\),\.\.\.f,\.\.\.\([bc]\?\[\]:\["Shortcuts"\]\),\.\.\.\([bc]\.hideProvideFeedback\?\[\]:\["Provide Feedback"\]\)\];` +
+			`var k=[a-zA-Z0-9_$]+\(!0\);[bc]=k\.path\.length;var l=[bc]===0,m=k\.path\[0\]\?\?k\.exiting\[0\],n=m\?\.startsWith\("workspace:"\);)` +
+			`(return ([a-zA-Z0-9_$]+)\.createElement\("div",\{ref:k\.setHost,className:"relative h-full w-full overflow-hidden"\},[\r\n\s]*[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*` +
+			`\{offset:-[bc],active:l,[\r\n\s]*depth:0,footer:[a-zA-Z0-9_$]+\.includes\("Account"\)\?[a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex flex-col border-t border-border p-1"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{showChevron:!0,className:"mx-1 px-3 py-2\.5",onClick:\(\)=>\{a\(([a-zA-Z0-9_$]+)\("Account"\)\);k\.push\("Account"\)\}\}\)\):void 0\},` +
+			`[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{text:"Settings"\}\),[bc]\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\(([a-zA-Z0-9_$]+),\{key:[a-zA-Z0-9_$]+,(?:text:[a-zA-Z0-9_$]+,)?label:[^,]+,onClick:\(\)=>\{a\([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)\);k\.push\([a-zA-Z0-9_$]+\)\}\}\)\),` +
+			`h&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Fragment,null,[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{text:"Workspaces"\}\),g\.map\([a-zA-Z0-9_$]+=>[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,[\r\n\s]*\{key:[a-zA-Z0-9_$]+\.uri,(?:label|text):[a-zA-Z0-9_$]+\.name,[\r\n\s]*onClick:\(\)=>[\r\n\s]*\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.uri;a\([a-zA-Z0-9_$]+\(\{workspaceUri:[a-zA-Z0-9_$]+\}\)\);k\.push\(` + "`" + `workspace:\$\{[a-zA-Z0-9_$]+\}` + "`" + `\)\}\}\)\)\)\))` +
+			`(,m&&[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{offset:1-[bc],active:[bc]===1,depth:1,exiting:k\.exiting\.includes\(m\),onExited:\(\)=>\{k\.onExited\(m\)\},header:[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{onBack:k\.pop\}\)\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+\.Provider,\{value:!0\},)` +
+			`(n\?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\):[a-zA-Z0-9_$]+\(m\))` +
+			`(\)\)\)\};[\s\S]+?var a=([a-zA-Z0-9_$]+)\(\),b=!!a\.get\("settings"\)\?\.hideProjects[\s\S]+?(?:\{(?:settingsFeature:[a-zA-Z0-9_$]+,)?projectManagementFeature:g\}=\(0,[a-zA-Z0-9_$]+\.useContext\)\(([a-zA-Z0-9_$]+)\)|g=([a-zA-Z0-9_$]+)\(\))[\s\S]+?,[a-zA-Z0-9_$]+=([a-zA-Z0-9_$]+)\(g(?:\?\.|\.)projectsStateProvider\))`,
+	)
+	mobileUserMessageActionsRe     = regexp.MustCompile(`(className:)"([^"]*?\buser-input-buttons-container\b[^"]*)"`)
+	mobileConversationRowActionsRe = regexp.MustCompile(`className:([a-zA-Z0-9_$]+)\("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0\.5 z-10",[\r\n\s]*([a-zA-Z0-9_$]+)\?"hidden":([a-zA-Z0-9_$]+)\?"opacity-100":[\r\n\s]*"((?:[a-z-]+:)?opacity-0 group-hover:opacity-100 [^"]+)"\)`)
 
-	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`var\s+\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
+	mobileTitlebarDeleteHookRe  = regexp.MustCompile(`([,\s]|var\s+)\{handleArchive:([a-zA-Z0-9_$]+),handleRestore:([a-zA-Z0-9_$]+),handlePin:([a-zA-Z0-9_$]+),handleUnpin:([a-zA-Z0-9_$]+),[\r\n\s]*isArchiveSupported:([a-zA-Z0-9_$]+),handleShare:([a-zA-Z0-9_$]+),showShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*shareUrl:([a-zA-Z0-9_$]+),handleCloseShareModal:([a-zA-Z0-9_$]+),[\r\n\s]*onShare:([a-zA-Z0-9_$]+)\}=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\?\?""\)`)
 	mobileTitlebarDeleteMenuRe  = regexp.MustCompile(`([a-zA-Z0-9_$]+)\&\&\(([a-zA-Z0-9_$]+)\.push\(\{iconName:"edit",tooltip:"Rename",onClick:([a-zA-Z0-9_$]+)\}\)`)
 	mobileTitlebarDeleteModalRe = regexp.MustCompile(`([a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\{cascadeId:([a-zA-Z0-9_$]+),paneId:([a-zA-Z0-9_$]+),includeRemoveFromSplit:!1\}\);[\r\n\s]*return\s+[a-zA-Z0-9_$]+(?:\.length>0)?(?:\|\|[a-zA-Z0-9_$]+(?:\.length>0)?)+\?([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,)`)
 	mobileDeleteModalExportRe   = regexp.MustCompile(`(?:var|const)\s+([a-zA-Z0-9_$]+)=(\(\{[^}]*isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:[a-zA-Z0-9_$]+\}\)=>)`)
@@ -35,7 +49,7 @@ var (
 	mobileKebabWrapperPinArchiveRe   = regexp.MustCompile(`(?:const|var)\s+([a-zA-Z0-9_$]+)=(?:(?:[a-zA-Z0-9_$]+)\.memo\()?[\r\n\s]*(?:function)?\(\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),onOpenChange:([a-zA-Z0-9_$]+),onViewDebugClick:([a-zA-Z0-9_$]+)[^\}]*\}\)(?:=>|\{return\s+)([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{onOpenChange:([a-zA-Z0-9_$]+)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{asChild:!0\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon","aria-label":"More options","data-testid":"conversation-kebab",onClick:([a-zA-Z0-9_$]+)=>void ([a-zA-Z0-9_$]+)\.stopPropagation\(\)\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"more_vert",size:16\}\)\)\),([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:([a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([a-zA-Z0-9_$]+),isUnread:([a-zA-Z0-9_$]+),[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+)[^\}]*\}\)(?:\))?(?:\})?(?:\))?;`)
 	mobileKebabCallPinArchiveRe      = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),[\r\n\s]*\{cascadeId:([a-zA-Z0-9_$]+),onDeleteClick:(\(\)=>\{?[a-zA-Z0-9_$]+\(!0\)\}?|[a-zA-Z0-9_$]+),onRenameClick:([a-zA-Z0-9_$]+),onMarkAsReadClick:([^\}]+?),isUnread:([a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)?),onOpenChange:([a-zA-Z0-9_$]+)(?:,[\r\n\s]*onViewDebugClick:([a-zA-Z0-9_$]+))?(?:,[\r\n\s]*onShareClick:[^\}]+?)?\}\)`)
 	mobileHideAuxSidebarRe           = regexp.MustCompile(`([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{iconName:"dock_to_bottom",onClick:[a-zA-Z0-9_$]+,"aria-label":"Toggle Auxiliary Pane",dataTestId:"mobile-toggle-aux-sidebar"\}\)`)
-	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c[^\}]*?onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
+	settingsRulesEditorRe            = regexp.MustCompile(`((?:var|const)\s+([a-zA-Z0-9_$]+)=\(\{name:a,path:b,onCopyPath:c[^\}]*?(?:onEdit:([a-zA-Z0-9_$]+),editTitle:([a-zA-Z0-9_$]+)="Edit",)?onDelete:([a-zA-Z0-9_$]+),deleteTitle:([a-zA-Z0-9_$]+)="Delete",onToggle:([a-zA-Z0-9_$]+),toggleChecked:([a-zA-Z0-9_$]+),toggleDisabled:([a-zA-Z0-9_$]+)=!1,expandableContent:([a-zA-Z0-9_$]+)[^\}]*?\}\)=>\{)(var\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+(?:\|\|[a-zA-Z0-9_$]+)+,\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]=\(0,([a-zA-Z0-9_$]+)\.useState\)\(!1\),)`)
 	settingsCustomizationsShowEditRe = regexp.MustCompile(`("Copy path"\)\),)!([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)&&([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+)\.Fragment,null,([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{variant:"ghost",size:"icon-sm",onClick:([a-zA-Z0-9_$]+),"aria-label":`)
 	settingsRestoreCustomizationsRe  = regexp.MustCompile(`g=([a-zA-Z0-9_$]+)=>\{if\(![a-zA-Z0-9_$]+\)return [a-zA-Z0-9_$]+;[a-zA-Z0-9_$]+=new Map\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.delete\("Customizations"\);[\r\n\s]*return [a-zA-Z0-9_$]+\};`)
 
@@ -45,31 +59,32 @@ var (
 
 	mobileSkipNotificationRe = regexp.MustCompile(`var ([a-zA-Z0-9_$]+)=!!this\.storageService\.get\("didAskForNotificationPermission"\);`)
 
-	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{section:)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\);(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},)([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"\},([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{surface:"background"\}\)\),`)
+	mobileNewConvoViewRe = regexp.MustCompile(`((?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var a=[a-zA-Z0-9_$]+\(\),b=[a-zA-Z0-9_$]+\(\);return\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(c,([a-zA-Z0-9_$]+)\)=>\{[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.map\(f=>\(\{trigger:f,ran:!1\}\)\)\);[a-zA-Z0-9_$]+\(c,\{section:)[a-zA-Z0-9_$]+(\}\)\},\[[a-zA-Z0-9_$]+,[a-zA-Z0-9_$]+\]\)\};[\r\n\s]*(?:var|const)\s+[a-zA-Z0-9_$]+=\(\)=>\{var [a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\),\{q:[a-zA-Z0-9_$]+\}=([a-zA-Z0-9_$]+)\(\{strict:!1\}\)(?:,[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\(\)\.get\("conciergeAgent"\)\?\.enabled\?\?!1)?;(?:[a-zA-Z0-9_$]+\("MOBILE_HOME_VIEW"\);)?)(return\s+([a-zA-Z0-9_$]+)\.createElement\("div",\{className:"w-full h-full flex flex-col min-h-0 animate-fade-in"\},)([a-zA-Z0-9_$]+\.createElement\("div",\{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-(?:6|3) pt-3"\},(?:[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.createElement\("div",\{className:"shrink-0 px-2","data-testid":"mobile-home-concierge"\},[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,null\)\),)?[a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{surface:"background"\}\)\)),`)
 
 	mobileNewConvoHeaderRe = regexp.MustCompile(`([a-zA-Z0-9_$]+)=\(\)=>([a-zA-Z0-9_$]+)\(\{select:a=>a\.location\.pathname==="\/"\}\)`)
 
-	mobileBackClearsSectionRe         = regexp.MustCompile(`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)([a-zA-Z0-9_$]+)\(\)(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"\}\))`)
+	mobileBackClearsSectionRe         = regexp.MustCompile(`([a-zA-Z0-9_$]+\.createElement\([a-zA-Z0-9_$]+,\{iconName:"arrow_back",onClick:\(\)=>)([a-zA-Z0-9_$]+)\(\)(,"aria-label":"Back to home",dataTestId:"mobile-back-to-home"(?:,[^}]+)?\}\))`)
 	suppressConversationUnavailableRe = regexp.MustCompile(`[a-zA-Z0-9_$]+\(\{tag:"trajectory-not-found",title:"Conversation unavailable",message:"The conversation could not be loaded because its data was not found\."\}\)`)
 	disableTelemetryRe                = regexp.MustCompile(`return\{telemetryEnabled:[a-zA-Z0-9_$]+,marketingEmailsEnabled:`)
 
 	folderPickerInitialPathRe = regexp.MustCompile(`initialPath:[a-zA-Z0-9_$]+\?[a-zA-Z0-9_$]+\.fsPath:[a-zA-Z0-9_$]+\?"C:/":"/",fetchDirectoryContents:`)
 
-	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"image",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"Media",onClick:([a-zA-Z0-9_$]+)\}`)
+	composerUploadMenuRe = regexp.MustCompile(`\{icon:([a-zA-Z0-9_$]+)=>([a-zA-Z0-9_$]+)\.createElement\(([a-zA-Z0-9_$]+),\{name:"(?:image|attach_file)",size:[a-zA-Z0-9_$]+\.width\?Number\([a-zA-Z0-9_$]+\.width\):14,className:[a-zA-Z0-9_$]+\.className\}\),[\r\n\s]*label:"(?:Media|Files)",onClick:([a-zA-Z0-9_$]+)\}`)
 
 	fileUploadAcceptAllRe = regexp.MustCompile(`(onChange:[a-zA-Z0-9_$]+,)accept:[a-zA-Z0-9_$]+,[\r\n\s]*multiple:!0|accept:"\.png,[^"]+",[\r\n\s]*multiple:!0`)
 
-	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
+	fileUploadInputResetRe = regexp.MustCompile(`var\s+([a-zA-Z0-9_$]+)=\(\{onFilesSelected:([a-zA-Z0-9_$]+)\}\)=>\{var\s+([a-zA-Z0-9_$]+)=\(0,([a-zA-Z0-9_$]+)\.useRef\)\(null\),([a-zA-Z0-9_$]+)=\(0,[a-zA-Z0-9_$]+\.useCallback\)\(([a-zA-Z0-9_$]+)=>\{[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.target;(?:[a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.files\)|if\([a-zA-Z0-9_$]+\.files\&\&[a-zA-Z0-9_$]+\.files\.length>0\)\{[\s\S]{1,300}?[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+\.value=""\})\},\[[a-zA-Z0-9_$]+\]\);return\{openFileDialog:\(0,[a-zA-Z0-9_$]+\.useCallback\)\(\(\)=>\{[a-zA-Z0-9_$]+\.current\?\.click\(\)\},\[\]\),fileInputRef:[a-zA-Z0-9_$]+,handleFileChange:[a-zA-Z0-9_$]+\}\};`)
 
 	fileUploadCustomTextTypesRe = regexp.MustCompile(`function ([a-zA-Z0-9_$]+)\(a,b\)\{b=b\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\);if\(([a-zA-Z0-9_$]+)\.includes\(b\)\)return b;a=a\.slice\(a\.lastIndexOf\("\."\)\+1\)\.toLowerCase\(\);return ([a-zA-Z0-9_$]+)\[a\]\}(function [a-zA-Z0-9_$]+\(a\)\{return [a-zA-Z0-9_$]+\("",a\)!==void 0\})`)
 
-	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\("validation_check_failed",[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
+	fileUploadLargeFileStreamingRe        = regexp.MustCompile(`if\(([a-zA-Z0-9_$]+)\)if\(([a-zA-Z0-9_$]+)\.size>1048576\)(?:console\.error\("Text file size exceeds 1MB limit"\);|[a-zA-Z0-9_$]+\?\.\("Text file size exceeds 1MB limit"\),[a-zA-Z0-9_$]+\((?:[a-zA-Z0-9_$]+\.VALIDATION_CHECK_FAILED|"validation_check_failed"),[\r\n\s]*Error\("Text file size exceeds 1MB limit"\)\);)`)
 	virtualizationDisableContractionRe    = regexp.MustCompile(`contractionSafetyPx:3E3,outerRadiusPx:5E3`)
 	initialConversationPageRe             = regexp.MustCompile(`(initialStepsSlice:[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\.SliceSchema,)[a-zA-Z0-9_$]+(\),initialGeneratorMetadatasSlice:)`)
 	questionModalWriteInRadioRe           = regexp.MustCompile(`(value:"__write_in__",checked:([a-zA-Z0-9_$]+),onChange:\(\)=>\{(?:var|let|const)\s+([a-zA-Z0-9_$]+)=)!([a-zA-Z0-9_$]+)(;[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\);[a-zA-Z0-9_$]+&&\(([a-zA-Z0-9_$]+)\.isMultiSelect\|\|)`)
-	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
-	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})`)
+	questionModalWriteInFocusRe           = regexp.MustCompile(`(onClick:\(\)=>\{([a-zA-Z0-9_$]+)\|\|[\r\n\s]*\(([a-zA-Z0-9_$]+)\(!0\),([a-zA-Z0-9_$]+)\.isMultiSelect\|\|([a-zA-Z0-9_$]+)\(\)\)\})(,onChange:)`)
+	questionModalPreventRadioFocusStealRe = regexp.MustCompile(`(if\((?:document\.hasFocus\(\)&&)?![a-zA-Z0-9_$]+\.isMultiSelect&&![a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.length>0)(\)\{(?:var|let|const)\s+[a-zA-Z0-9_$]+=[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\[0\]\);[a-zA-Z0-9_$]+&&[a-zA-Z0-9_$]+\.focus\(\)\})|([a-zA-Z0-9_$]+\|\|[a-zA-Z0-9_$]+===void 0\|\|[a-zA-Z0-9_$]+\.isMultiSelect\|\|!document\.hasFocus\(\)\|\|[a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+\)&&[a-zA-Z0-9_$]+!==[a-zA-Z0-9_$]+\.current)(\|\|[a-zA-Z0-9_$]+\.current\.get\([a-zA-Z0-9_$]+\)\?\.focus\(\);?)`)
 	autoscrollDistanceFixRe               = regexp.MustCompile(`return\s+([a-zA-Z0-9_$]+)\?\(([a-zA-Z0-9_$]+)\.current\?[a-zA-Z0-9_$]+\.current\([a-zA-Z0-9_$]+\):[a-zA-Z0-9_$]+\.scrollHeight-[a-zA-Z0-9_$]+\.clientHeight-[a-zA-Z0-9_$]+\.scrollTop\)<=([a-zA-Z0-9_$]+):!1`)
+	bootstrapLocalUserInfoRetryRe         = regexp.MustCompile(`async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([a-zA-Z0-9_$]+),c=[a-zA-Z0-9_$]+;try\{let\s+[a-zA-Z0-9_$]+=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[a-zA-Z0-9_$]+\.username;return\{homeUri:([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}|async\s+function\s+([a-zA-Z0-9_$]+)\(a\)\{var\s+b=([a-zA-Z0-9_$]+),c=[a-zA-Z0-9_$]+;try\{let\s+[a-zA-Z0-9_$]+=c\(await\s+b\(a\.lsClient\.getLocalUserInfo\(([a-zA-Z0-9_$]+\([a-zA-Z0-9_$]+,\{\}\))\)\)\),f=[a-zA-Z0-9_$]+\.username;return\{homeDirUri:([a-zA-Z0-9_$]+)\([a-zA-Z0-9_$]+\.homeDirUri\),username:f\}\}finally\{b\(\)\}\}`)
 )
 
 func mobile(o Options) bool { return o.MobileUX }
@@ -279,7 +294,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileNewConvoViewRe,
-			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7}.createElement("div",{className:"flex-1 min-h-0 overflow-y-auto flex flex-col gap-6 pt-3"},${8}.createElement(${9},{surface:"background"})),`,
+			Replace: `${1}${2},replace:!0${3}var {section:sec}=${4}({strict:!1}),isMobileNew=Boolean((window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches))&&sec);${5}isMobileNew?${6}.createElement("div",{className:"flex-1 min-h-0 flex flex-col items-center justify-center gap-3 select-none"},${6}.createElement("span",{className:"text-xs text-muted-foreground/60"},"Start a new conversation")):${7},`,
 		},
 
 		// On mobile, show the back button in the main titlebar when a project is selected
@@ -328,7 +343,13 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileProjectKebabMenuRe,
-			Replace: `,${1}=(0,${2}.useContext)(${3}),${4}=!1,`,
+			Replace: `,z=(0,y.useContext)(DEb),A=!1,`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if len(g[5]) > 0 {
+					return string(g[5]) + string(g[6])
+				}
+				return `,` + string(g[1]) + `=(0,` + string(g[2]) + `.useContext)(` + string(g[3]) + `),` + string(g[4]) + `=!1,`
+			},
 		},
 		{
 			ID:      "mobile-project-add-click-close-sidebar",
@@ -339,15 +360,49 @@ func All() []Patch {
 			FindRe:  mobileProjectAddClickCloseSidebarRe,
 			Replace: `onClick:${1}=>{${2}.stopPropagation();${3}(${2})||(function(){try{if(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){var _sb=document.querySelector('[data-testid="sidebar-toggle"], [data-testid="mobile-toggle-sidebar"]');if(_sb&&window.getComputedStyle(_sb).display!=="none"){_sb.click();}}}catch(e){}}(),${2}.preventDefault(),${4}(${2}))}`,
 		},
+		// Antigravity 2.23.0 snapshots projectsOrder into localStorage on mount with
+		// projectsFolderSortBy defaulted to "custom". When projects load before
+		// conversation timestamps arrive, that snapshot locks in alphabetical order
+		// and ignores subsequent Sort By selections ("last_updated" or
+		// "last_user_prompt"). Re-run the dynamic sort whenever projectsSortBy is
+		// not "custom".
 		{
-			ID:       "mobile-project-sort-order",
-			Desc:     "Preserve custom project order when conversations are loading on mobile",
-			Target:   MainJS,
-			Kind:     Regexp,
-			Optional: true,
-			Enabled:  mobile,
-			FindRe:   mobileProjectSortOrderRe,
-			Replace:  `if(${1}.length===0){let _raw=${2};try{let _s=JSON.parse(window.localStorage.getItem("antigravity:conversation-list-project-order")||"[]");if(Array.isArray(_s)&&_s.length>0){let _m=new Map(_s.map((k,i)=>[k,i]));_raw.sort((a,b)=>{let ia=_m.has(a.key)?_m.get(a.key):1e9,ib=_m.has(b.key)?_m.get(b.key):1e9;return ia!==ib?ia-ib:0})}}catch(e){}return _raw;}`,
+			ID:      "mobile-project-sort-order",
+			Desc:    "Sort grouped project folders by active Sort By selection instead of stale alphabetical order",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileProjectSortOrderRe,
+			Replace: `if($3!=="custom"||$1.length===0)return $2;`,
+		},
+		// Antigravity's mobile settings component (jNb) only renders Settings and
+		// Workspaces sections, omitting the Projects and Not in Project sections
+		// present in the desktop sidebar (mNb), and ignores settingsProjectId /
+		// settingsScreen URL parameters when opening Settings from a project menu.
+		{
+			ID:      "mobile-project-settings-export",
+			Desc:    "Export project settings component to global window for mobile settings navigation",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileProjectSettingsExportRe,
+			Replace: `window.__agyProjectSettings=$1;$0`,
+		},
+		{
+			ID:      "mobile-settings-projects",
+			Desc:    "Add Projects and Not in Project sections and deep-link navigation to mobile Settings view",
+			Target:  MainJS,
+			Kind:    Regexp,
+			Enabled: mobile,
+			FindRe:  mobileSettingsProjectsRe,
+			Replace: `${1}var {projectManagementFeature:_pm}=(0,${3}.useContext)(${11}),_hp=!!${10}().get("settings")?.hideProjects,_ps=${13}(_pm?.projectsStateProvider),_pl=(_ps||[]).filter(_x=>_x?.project&&!_x.project.isWorkspaceOnly&&!_x.project.archived),_init=(0,${3}.useRef)(!1);(0,${3}.useEffect)(()=>{if(_init.current)return;_init.current=!0;try{var _u=new URLSearchParams(window.location.search),_cl=s=>s?s.replace(/^"|"$/g,""):"",_pid=_cl(_u.get("settingsProjectId")),_scr=_cl(_u.get("settingsScreen"));if(_pid){a({type:"settingsScreen/setContextProjectId",payload:_pid});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_pid}});if(_scr)a(${4}(_scr));k.push("project:"+_pid)}else if(_scr&&_scr!=="General"){a(${4}(_scr));k.push(_scr)}}catch(_e){}},[]);${2},!_hp&&_pm&&_pl.length>0&&${3}.createElement(${3}.Fragment,null,${3}.createElement(${5},{text:"Projects"}),_pl.map(_p=>${3}.createElement(${6},{key:_p.project.id,text:_p.project.name||"Project",label:_p.project.name||"Project",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:_p.project.id});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_p.project.id}});k.push("project:"+_p.project.id)}}))),_pm&&${3}.createElement(${3}.Fragment,null,${3}.createElement(${5},{text:"Not in Project"}),${3}.createElement(${6},{key:"outside-of-project",text:"Conversations",label:"Conversations",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:"outside-of-project"});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:"outside-of-project"}});k.push("project:outside-of-project")}}))${7}m?.startsWith("project:")&&window.__agyProjectSettings?${3}.createElement(window.__agyProjectSettings,null):${8}${9}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				pmInit := `var {projectManagementFeature:_pm}=(0,` + string(g[3]) + `.useContext)(` + string(g[11]) + `)`
+				if len(g[11]) == 0 && len(g[12]) > 0 {
+					pmInit = `var _pm=` + string(g[12]) + `()`
+				}
+				return string(g[1]) + pmInit + `,_hp=!!` + string(g[10]) + `().get("settings")?.hideProjects,_ps=` + string(g[13]) + `(_pm?.projectsStateProvider),_pl=(_ps||[]).filter(_x=>_x?.project&&!_x.project.isWorkspaceOnly&&!_x.project.archived),_init=(0,` + string(g[3]) + `.useRef)(!1);(0,` + string(g[3]) + `.useEffect)(()=>{if(_init.current)return;_init.current=!0;try{var _u=new URLSearchParams(window.location.search),_cl=s=>s?s.replace(/^"|"$/g,""):"",_pid=_cl(_u.get("settingsProjectId")),_scr=_cl(_u.get("settingsScreen"));if(_pid){a({type:"settingsScreen/setContextProjectId",payload:_pid});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_pid}});if(_scr)a(` + string(g[4]) + `(_scr));k.push("project:"+_pid)}else if(_scr&&_scr!=="General"){a(` + string(g[4]) + `(_scr));k.push(_scr)}}catch(_e){}},[]);` + string(g[2]) + `,!_hp&&_pm&&_pl.length>0&&` + string(g[3]) + `.createElement(` + string(g[3]) + `.Fragment,null,` + string(g[3]) + `.createElement(` + string(g[5]) + `,{text:"Projects"}),_pl.map(_p=>` + string(g[3]) + `.createElement(` + string(g[6]) + `,{key:_p.project.id,text:_p.project.name||"Project",label:_p.project.name||"Project",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:_p.project.id});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:_p.project.id}});k.push("project:"+_p.project.id)}}))),_pm&&` + string(g[3]) + `.createElement(` + string(g[3]) + `.Fragment,null,` + string(g[3]) + `.createElement(` + string(g[5]) + `,{text:"Not in Project"}),` + string(g[3]) + `.createElement(` + string(g[6]) + `,{key:"outside-of-project",text:"Conversations",label:"Conversations",onClick:()=>{a({type:"settingsScreen/setContextProjectId",payload:"outside-of-project"});a({type:"settingsScreen/navigateToProjectScreen",payload:{projectId:"outside-of-project"}});k.push("project:outside-of-project")}}))` + string(g[7]) + `m?.startsWith("project:")&&window.__agyProjectSettings?` + string(g[3]) + `.createElement(window.__agyProjectSettings,null):` + string(g[8]) + string(g[9])
+			},
 		},
 		{
 			ID:      "mobile-user-message-actions",
@@ -374,7 +429,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteHookRe,
-			Replace: `var {handleArchive:$1,handleRestore:$2,handlePin:$3,handleUnpin:$4,isArchiveSupported:$5,handleDelete:agyDel,showDeleteModal:agyShowDel,setShowDeleteModal:agySetShowDel,showLoadingSpinner:agyDelSpin,handleCloseDeleteModal:agyCloseDel,handleShare:$6,showShareModal:$7,shareUrl:$8,handleCloseShareModal:$9,onShare:$10}=$11($12??"")`,
+			Replace: `${1}{handleArchive:${2},handleRestore:${3},handlePin:${4},handleUnpin:${5},isArchiveSupported:${6},handleDelete:agyDel,showDeleteModal:agyShowDel,setShowDeleteModal:agySetShowDel,showLoadingSpinner:agyDelSpin,handleCloseDeleteModal:agyCloseDel,handleShare:${7},showShareModal:${8},shareUrl:${9},handleCloseShareModal:${10},onShare:${11}}=${12}(${13}??"")`,
 		},
 		{
 			ID:      "mobile-titlebar-delete-menu",
@@ -383,7 +438,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteMenuRe,
-			Replace: `$1&&($2.push({iconName:"edit",tooltip:"Rename",onClick:$3}),$2.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
+			Replace: `$1&&($2.push({iconName:"edit",tooltip:"Rename",onClick:$3}),$2.push({iconName:"delete",tooltip:"Delete",onClick:()=>{typeof agySetShowDel==="function"&&agySetShowDel(!0)}})`,
 		},
 		{
 			ID:      "mobile-delete-modal-export",
@@ -401,7 +456,7 @@ func All() []Patch {
 			Kind:    Regexp,
 			Enabled: mobile,
 			FindRe:  mobileTitlebarDeleteModalRe,
-			Replace: `${1}window.__agyDeleteModal?${4}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(typeof agyDel==="function"&&${2})agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
+			Replace: `${1}window.__agyDeleteModal&&typeof agyShowDel!=="undefined"?${4}.createElement(window.__agyDeleteModal,{isOpen:agyShowDel,onClose:agyCloseDel,onDelete:function(){agySetShowDel(!1);try{if(typeof agyDel==="function"&&${2})agyDel()}catch(e){}var _b=document.querySelector('[data-testid="mobile-back-to-home"]');if(_b){_b.click()}else{try{window.history.replaceState(null,"","/");window.dispatchEvent(new PopStateEvent("popstate"))}catch(e){window.location.replace("/")}}},showLoadingSpinner:agyDelSpin}):null,`,
 		},
 		{
 			ID:       "mobile-kebab-menu-pin-archive",
@@ -451,6 +506,15 @@ func All() []Patch {
 			Enabled: func(Options) bool { return true },
 			FindRe:  settingsRulesEditorRe,
 			Replace: `${1}var _R=${12},[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)e=agySavedDesc;var agyDoEdit=${3}||(b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0);var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);var _desc=agyTxt.length>120?agyTxt.slice(0,120)+"\u2026":agyTxt;agySetSavedDesc(_desc);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){}finally{agySetSave(!1)}};${3}=agyDoEdit;var agyEditorNode=agyEdit?_R.createElement("div",{className:"w-full mt-2 pt-2 border-t border-border flex flex-col gap-2"},_R.createElement("textarea",{value:agyTxt,onChange:e=>agySetTxt(e.target.value),placeholder:"Write markdown instructions...",className:"agy-rules-editor w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y text-foreground leading-normal",style:{fontSize:"11px",lineHeight:"1.45",minHeight:"200px",maxHeight:"500px"},spellCheck:!1}),_R.createElement("div",{className:"flex items-center justify-end gap-2"},_R.createElement("button",{type:"button",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground"},"Cancel"),_R.createElement("button",{type:"button",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 rounded flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90"},agySave?"Saving...":(agyDone?"Saved ✓":"Save")))):null;var agyExp=${10}?_R.createElement(_R.Fragment,null,${10},agyEditorNode):agyEditorNode;${10}=agyExp;${11}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				onEditAssign := ""
+				onEditFallback := ""
+				if len(g[3]) > 0 {
+					onEditFallback = string(g[3]) + "||"
+					onEditAssign = string(g[3]) + "=agyDoEdit;"
+				}
+				return string(g[1]) + `var _R=` + string(g[12]) + `,[agyEdit,agySetEdit]=_R.useState(!1),[agyTxt,agySetTxt]=_R.useState(""),[agySave,agySetSave]=_R.useState(!1),[agyDone,agySetDone]=_R.useState(!1),[agySavedDesc,agySetSavedDesc]=_R.useState(null);if(agySavedDesc!==null)e=agySavedDesc;var agyDoEdit=` + onEditFallback + `(b?async()=>{if(agyEdit){agySetEdit(!1);return;}try{let res=await fetch("/__agy/api/rules/read?path="+encodeURIComponent(b));if(res.ok){let json=await res.json();agySetTxt(json.content||"");agySetEdit(!0);}}catch(e){}}:void 0);var agyDoSave=async()=>{agySetSave(!0);try{let res=await fetch("/__agy/api/rules/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:b,content:agyTxt})});if(res.ok){agySetDone(!0);var _desc=agyTxt.length>120?agyTxt.slice(0,120)+"\u2026":agyTxt;agySetSavedDesc(_desc);setTimeout(()=>{agySetDone(!1);agySetEdit(!1)},1000);}}catch(e){}finally{agySetSave(!1)}};` + onEditAssign + `var agyEditorNode=agyEdit?_R.createElement("div",{className:"w-full mt-2 pt-2 border-t border-border flex flex-col gap-2"},_R.createElement("textarea",{value:agyTxt,onChange:e=>agySetTxt(e.target.value),placeholder:"Write markdown instructions...",className:"agy-rules-editor w-full font-mono text-xs p-2.5 rounded-lg border border-border bg-muted/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y text-foreground leading-normal",style:{fontSize:"11px",lineHeight:"1.45",minHeight:"200px",maxHeight:"500px"},spellCheck:!1}),_R.createElement("div",{className:"flex items-center justify-end gap-2"},_R.createElement("button",{type:"button",onClick:()=>agySetEdit(!1),disabled:agySave,className:"text-xs h-7 px-3 rounded border border-border bg-muted/40 hover:bg-muted text-muted-foreground"},"Cancel"),_R.createElement("button",{type:"button",onClick:agyDoSave,disabled:agySave,className:"text-xs h-7 px-3 rounded flex items-center gap-1 font-medium bg-primary text-primary-foreground hover:bg-primary/90"},agySave?"Saving...":(agyDone?"Saved ✓":"Save")))):null;var agyExp=` + string(g[10]) + `?_R.createElement(_R.Fragment,null,` + string(g[10]) + `,agyEditorNode):agyEditorNode;` + string(g[10]) + `=agyExp;` + string(g[11])
+			},
 		},
 		{
 			ID:       "settings-customizations-show-edit",
@@ -599,6 +663,12 @@ func All() []Patch {
 			Kind:    Regexp,
 			FindRe:  questionModalPreventRadioFocusStealRe,
 			Replace: `${1}&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)${2}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if len(g[3]) > 0 {
+					return string(g[3]) + `||document.activeElement?.getAttribute?.("data-testid")==="ask-question-writein"||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)` + string(g[4])
+				}
+				return string(g[1]) + `&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)` + string(g[2])
+			},
 		},
 		{
 			ID:      "autoscroll-distance-fix",
@@ -608,6 +678,30 @@ func All() []Patch {
 			Enabled: func(Options) bool { return true },
 			FindRe:  autoscrollDistanceFixRe,
 			Replace: `return ${1}?(${1}.scrollHeight-${1}.clientHeight-${1}.scrollTop)<=${3}:!1`,
+		},
+
+		// During app bootstrap, getServerConfiguration and getMendelFlags catch
+		// RPC errors, whereas getLocalUserInfo has no retry or fallback. If the
+		// initial RPC socket closes while a mobile PWA is briefly backgrounded,
+		// getLocalUserInfo rejects and aborts createRoot().render(), leaving #root
+		// permanently blank. Retry up to 3 times with short backoff so the
+		// transport can open a fresh socket, and fall back to a default root URI
+		// if all attempts fail so the UI still mounts.
+		{
+			ID:      "bootstrap-local-user-info-retry",
+			Desc:    "Retry getLocalUserInfo during startup so a transient socket drop does not abort mounting #root",
+			Target:  MainJS,
+			Kind:    Regexp,
+			FindRe:  bootstrapLocalUserInfoRetryRe,
+			Replace: `async function $1(a){var b=d,c=d;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo($2)));break}catch(_e){c();if(_i===2)return{homeDirUri:$3("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:$3(e.homeDirUri),username:f}}finally{b()}}`,
+			ReplaceMatch: func(g [][]byte, _ Options) string {
+				if len(g[1]) > 0 {
+					fn, b, callArg, uriFn := string(g[1]), string(g[2]), string(g[3]), string(g[4])
+					return fmt.Sprintf(`async function %s(a){var b=%s,c=%s;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(%s)));break}catch(_e){c();if(_i===2)return{homeUri:%s("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeUri:%s(e.homeDirUri),username:f}}finally{b()}}`, fn, b, b, callArg, uriFn, uriFn)
+				}
+				fn, b, callArg, uriFn := string(g[5]), string(g[6]), string(g[7]), string(g[8])
+				return fmt.Sprintf(`async function %s(a){var b=%s,c=%s;try{let e;for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(%s)));break}catch(_e){c();if(_i===2)return{homeDirUri:%s("file:///"),username:""};await new Promise(_r=>setTimeout(_r,250*(_i+1)))}let f=e.username;return{homeDirUri:%s(e.homeDirUri),username:f}}finally{b()}}`, fn, b, b, callArg, uriFn, uriFn)
+			},
 		},
 
 		{
@@ -2144,6 +2238,28 @@ const uploaderScript = `<script>
     hiddenFileInput.click();
   };
 
+  var NATIVE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'];
+
+  function isNativeImageFile(f) {
+    if (!f || !f.type) return false;
+    return NATIVE_IMAGE_TYPES.indexOf(f.type.split(';')[0].trim().toLowerCase()) !== -1;
+  }
+
+  function dismissNativeDragOverlays() {
+    window.dispatchEvent(new MouseEvent('mouseup'));
+    try {
+      window.dispatchEvent(new DragEvent('dragleave', { relatedTarget: null }));
+    } catch (_) {
+      var leaveEvent = new Event('dragleave');
+      try {
+        Object.defineProperty(leaveEvent, 'relatedTarget', { value: null });
+      } catch (_) {
+        leaveEvent.relatedTarget = null;
+      }
+      window.dispatchEvent(leaveEvent);
+    }
+  }
+
   // Drag and drop support using Antigravity native UI
   window.addEventListener('dragover', function(e) {
     if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
@@ -2153,26 +2269,45 @@ const uploaderScript = `<script>
   }, true);
 
   window.addEventListener('drop', function(e) {
-    // Immediately reset native drag overlay state
-    window.dispatchEvent(new MouseEvent('mouseup'));
-
     var files = e.dataTransfer && e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-    var needsStreaming = false;
-    for (var i = 0; i < files.length; i++) {
-      var f = files[i];
-      var isSmallImage = f.type.startsWith('image/') && f.size <= 1048576;
-      if (!isSmallImage) {
-        needsStreaming = true;
-        break;
+    var dirNames = {};
+    var items = e.dataTransfer && e.dataTransfer.items;
+    if (items) {
+      for (var j = 0; j < items.length; j++) {
+        try {
+          var item = items[j];
+          if (item && item.kind === 'file' && typeof item.webkitGetAsEntry === 'function') {
+            var entry = item.webkitGetAsEntry();
+            if (entry && entry.isDirectory && entry.name) {
+              dirNames[entry.name] = true;
+            }
+          }
+        } catch (_) {}
       }
     }
 
-    if (needsStreaming) {
+    var uploadFiles = [];
+    var needsStreaming = false;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (dirNames[f.name]) continue;
+      uploadFiles.push(f);
+      if (!isNativeImageFile(f)) {
+        needsStreaming = true;
+      }
+    }
+
+    if (needsStreaming && uploadFiles.length > 0) {
       e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      dismissNativeDragOverlays();
       if (window.__agyUpload) {
-        window.__agyUpload(files);
+        window.__agyUpload(uploadFiles);
       }
     }
   }, true);

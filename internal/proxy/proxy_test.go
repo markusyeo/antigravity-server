@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -608,5 +609,50 @@ func TestProxyIdleTracking(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if !p.IsIdle(20 * time.Millisecond) {
 		t.Errorf("expected IsIdle(20ms) to be true after 30ms elapsed")
+	}
+}
+
+func TestProxyAddsCacheControlToStaticAssets(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+
+	resp := get(t, front.URL, "/prism_bundle.js", "*/*")
+	if got := resp.Header.Get("Cache-Control"); got != staticAssetCacheControl {
+		t.Errorf("static asset Cache-Control = %q, want %q", got, staticAssetCacheControl)
+	}
+}
+
+func TestProxyCachesPatchedRootHTML(t *testing.T) {
+	var htmlHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		_, _ = w.Write([]byte(stubBundle))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		htmlHits.Add(1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(indexHTML))
+	})
+	ls := httptest.NewTLSServer(mux)
+	t.Cleanup(ls.Close)
+
+	front, _ := newTestProxy(t, ls)
+
+	first := get(t, front.URL, "/", "text/html")
+	firstBody := body(t, first)
+	if htmlHits.Load() != 1 {
+		t.Fatalf("expected 1 upstream HTML fetch, got %d", htmlHits.Load())
+	}
+
+	second := get(t, front.URL, "/", "text/html")
+	secondBody := body(t, second)
+	if htmlHits.Load() != 1 {
+		t.Errorf("second root HTML request hit upstream (%d fetches), want served from memory", htmlHits.Load())
+	}
+	if secondBody != firstBody {
+		t.Error("cached HTML body differs from initial patched HTML")
+	}
+	if got := second.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("cached HTML Cache-Control = %q, want no-store", got)
 	}
 }

@@ -44,14 +44,18 @@ type Options struct {
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
-	handler        http.Handler
-	opts           Options
-	reported       sync.Map
-	activeConns    atomic.Int64
-	lastActivityNs atomic.Int64
-	bundleMu       sync.RWMutex
-	bundle         *bundleCache
-	transport      http.RoundTripper
+	handler             http.Handler
+	opts                Options
+	reported            sync.Map
+	activeConns         atomic.Int64
+	lastActivityNs      atomic.Int64
+	bundleMu            sync.RWMutex
+	bundle              *bundleCache
+	htmlMu              sync.RWMutex
+	cachedHTML          []byte
+	cachedHTMLMissingWS bool
+	wsTransportMissing  atomic.Bool
+	transport           http.RoundTripper
 }
 
 type bundleCache struct {
@@ -146,6 +150,19 @@ func (p *Proxy) Handler() http.Handler {
 		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
 			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
 			return
+		}
+
+		// Fast-path: Serve cached patched root HTML immediately from memory (0ms latency)
+		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			if html := p.cachedRootHTML(); html != nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Length", strconv.Itoa(len(html)))
+				if r.Method == http.MethodGet {
+					_, _ = w.Write(html)
+				}
+				return
+			}
 		}
 
 		if r.URL.Path == "/main.js" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
@@ -245,6 +262,9 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	}
 	target, ok := targetFor(resp)
 	if !ok {
+		if resp.StatusCode == http.StatusOK && resp.Request != nil && (resp.Request.Method == http.MethodGet || resp.Request.Method == http.MethodHead) && isCacheableStaticAsset(resp.Request.URL.Path) {
+			resp.Header.Set("Cache-Control", staticAssetCacheControl)
+		}
 		return nil
 	}
 
@@ -254,6 +274,11 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		return err
 	}
 
+	opts := p.opts.Patch
+	if target == patches.HTML {
+		opts.WebSocketTransportMissing = p.wsTransportMissing.Load()
+	}
+
 	started := time.Now()
 	var patched []byte
 	var tag string
@@ -261,7 +286,8 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		digest := sha256.Sum256(body)
 		p.bundleMu.Lock()
 		if p.bundle == nil || p.bundle.digest != digest {
-			identity, report := patches.Apply(target, body, p.opts.Patch)
+			identity, report := patches.Apply(target, body, opts)
+			p.wsTransportMissing.Store(transportPatchMissing(report))
 			p.report(target, report)
 			var compressed bytes.Buffer
 			writer := gzip.NewWriter(&compressed)
@@ -284,7 +310,7 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		p.bundleMu.Unlock()
 	} else {
 		var report patches.Report
-		patched, report = patches.Apply(target, body, p.opts.Patch)
+		patched, report = patches.Apply(target, body, opts)
 		p.report(target, report)
 	}
 	resp.Header.Add("Server-Timing", fmt.Sprintf("patch;dur=%.1f", float64(time.Since(started).Microseconds())/1000))
@@ -298,11 +324,49 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	if target == patches.HTML {
 		resp.Header.Set("Cache-Control", "no-store")
+		if resp.Request != nil && resp.Request.Method == http.MethodGet && resp.Request.URL.Path == "/" && len(body) > 0 {
+			p.htmlMu.Lock()
+			p.cachedHTML = patched
+			p.cachedHTMLMissingWS = opts.WebSocketTransportMissing
+			p.htmlMu.Unlock()
+		}
 	} else {
 		setBundleValidators(resp.Header, tag)
 	}
 
 	return nil
+}
+
+func transportPatchMissing(report patches.Report) bool {
+	for _, res := range report {
+		if res.ID == "websocket-transport-default" {
+			return res.Status == patches.StatusMissing
+		}
+	}
+	return false
+}
+
+func (p *Proxy) cachedRootHTML() []byte {
+	p.htmlMu.RLock()
+	defer p.htmlMu.RUnlock()
+	if p.cachedHTML == nil || p.cachedHTMLMissingWS != p.wsTransportMissing.Load() {
+		return nil
+	}
+	return p.cachedHTML
+}
+
+const staticAssetCacheControl = "private, max-age=3600, stale-while-revalidate=86400"
+
+func isCacheableStaticAsset(path string) bool {
+	if path == "/main.js" || strings.HasPrefix(path, "/__agy/") {
+		return false
+	}
+	for _, ext := range []string{".css", ".js", ".svg", ".png", ".ico", ".woff2", ".woff", ".ttf", ".mp3", ".wasm"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Proxy) cachedBundle() *bundleCache {

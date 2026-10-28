@@ -61,7 +61,9 @@ var regexpFixtures = map[string]string{
 	"mobile-project-header-actions":             `className:Pm("absolute right-1 top-0 flex h-full items-center gap-1",k||t?"opacity-100":"opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100")`,
 	"mobile-project-kebab-menu":                 `,z=(0,y.useContext)(DEb),A=lK()&&z!==null,`,
 	"mobile-project-add-click-close-sidebar":    `onClick:D=>{D.stopPropagation();Skb(D)||(D.preventDefault(),d(D))}`,
-	"mobile-project-sort-order":                 `if(a.length===0)return J2e(c,d,e,f,g).map(H2e);`,
+	"mobile-project-sort-order":                 `if(N.length===0)return kZ(ha,D,J,U,ea).map(th);`,
+	"mobile-project-settings-export":            `function RNb(){var a=Hm(wX),b=Hm(xX),c=Xm(),e=$t(),{logEvent:f}=aA(),[g,h]=V3("main");return null}`,
+	"mobile-settings-projects":                  `var jNb=()=>{var a=Gm(),{settingsFeature:b}=(0,A.useContext)(xk),c=!!Lj().get("settings")?.hideShortcuts,{sharedNavItems:e,globalScreens:f,workspaces:g,showWorkspacesSection:h}=eNb();b=[...e.filter(q=>q!=="Account"),...f,...(c?[]:["Shortcuts"]),...(b.hideProvideFeedback?[]:["Provide Feedback"])];var k=y0a(!0);c=k.path.length;var l=c===0,m=k.path[0]??k.exiting[0],n=m?.startsWith("workspace:");return A.createElement("div",{ref:k.setHost,className:"relative h-full w-full overflow-hidden"},A.createElement(KL,{offset:-c,active:l,depth:0,footer:e.includes("Account")?A.createElement("div",{className:"flex flex-col border-t border-border p-1"},A.createElement(ZJb,{showChevron:!0,className:"mx-1 px-3 py-2.5",onClick:()=>{a(qX("Account"));k.push("Account")}})):void 0},A.createElement(hNb,{text:"Settings"}),b.map(q=>A.createElement(gNb,{key:q,label:q,onClick:()=>{a(qX(q));k.push(q)}})),h&&A.createElement(A.Fragment,null,A.createElement(hNb,{text:"Workspaces"}),g.map(q=>A.createElement(gNb,{key:q.uri,label:q.name,onClick:()=>{var r=q.uri;a(rX({workspaceUri:r}));k.push(` + "`workspace:${r}`" + `)}})))),m&&A.createElement(KL,{offset:1-c,active:c===1,depth:1,exiting:k.exiting.includes(m),onExited:()=>{k.onExited(m)},header:A.createElement(iNb,{onBack:k.pop})},A.createElement(ECb.Provider,{value:!0},n?A.createElement(gMb,null):fNb(m))))};function kNb(){return["Settings"]};var mNb=()=>{var a=Lj(),b=!!a.get("settings")?.hideProjects;a=!!a.get("settings")?.hideShortcuts;var c=Hm(tX),e=Hm(uX),{settingsFeature:f,projectManagementFeature:g}=(0,A.useContext)(xk),{sharedNavItems:h,globalScreens:k,workspaces:l,showWorkspacesSection:m}=eNb(),n=cS(),q=Pj(g?.projectsStateProvider);return null};`,
 	"mobile-user-message-actions":               `className:"absolute bottom-0.5 right-0.5 flex flex-row items-center p-1 rounded-full opacity-0 pointer-events-none group-hover/user-input-step:opacity-100 group-hover/user-input-step:pointer-events-auto transition-all bg-card user-input-buttons-shadow user-input-buttons-container"`,
 	"mobile-conversation-row-actions":           `className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",w?"hidden":ua?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 	"mobile-titlebar-delete-hook":               `var {handleArchive:v,handleRestore:w,handlePin:y,handleUnpin:z,isArchiveSupported:A,handleShare:B,showShareModal:C,shareUrl:D,handleCloseShareModal:E,onShare:F}=PX(r??"")`,
@@ -88,6 +90,7 @@ var regexpFixtures = map[string]string{
 	"question-modal-write-in-focus":             `onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:D=>{l(D.target.value)}`,
 	"question-modal-prevent-radio-focus-steal":  `if(!a.isMultiSelect&&!e&&b.length>0){let D=A.current.get(b[0]);D&&D.focus()}`,
 	"autoscroll-distance-fix":                   `return E?(B.current?B.current(E):E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+	"bootstrap-local-user-info-retry":           `async function Fzc(a){var b=d,c=d;try{let e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{})))),f=e.username;return{homeDirUri:Oe(e.homeDirUri),username:f}}finally{b()}};`,
 }
 
 func fullOptions() Options {
@@ -153,12 +156,16 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`className:"absolute right-1 top-0 flex h-full items-center gap-1 opacity-100"`,
 		`,z=(0,y.useContext)(DEb),A=!1,`,
 		`sidebar-toggle`,
+		`if(J!=="custom"||N.length===0)return kZ(ha,D,J,U,ea).map(th);`,
+		`window.__agyProjectSettings=RNb;function RNb(){`,
+		`settingsScreen/navigateToProjectScreen`,
+		`m?.startsWith("project:")&&window.__agyProjectSettings?A.createElement(window.__agyProjectSettings,null):`,
 		`className:"relative self-end ml-auto mt-1 flex flex-row items-center p-1 rounded-full opacity-90 pointer-events-auto transition-all bg-transparent user-input-buttons-container select-none"`,
 		`className:Pm("absolute top-0 bottom-0 -right-1 pl-6 flex items-center justify-end gap-0.5 z-10",(w||ua||Boolean(window.innerWidth<=768||(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)))?"opacity-100":"opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100")`,
 		`handleDelete:agyDel,showDeleteModal:agyShowDel`,
-		`L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{agySetShowDel(!0)}})`,
+		`L.push({iconName:"delete",tooltip:"Delete",onClick:()=>{typeof agySetShowDel==="function"&&agySetShowDel(!0)}})`,
 		`window.__agyDeleteModal=({isOpen:a,onClose:b,onDelete:c,showLoadingSpinner:d})=>`,
-		`window.__agyDeleteModal?`,
+		`window.__agyDeleteModal&&typeof agyShowDel!=="undefined"?`,
 		`Save`,
 		`/__agy/api/rules/save`,
 		`"Copy path")),n&&z.createElement`,
@@ -167,6 +174,7 @@ func TestPatchedContentIsCorrect(t *testing.T) {
 		`onClick:()=>{e||(m(!0),a.isMultiSelect||k())},onFocus:()=>{e||(m(!0),a.isMultiSelect||k())},onChange:`,
 		`if(!a.isMultiSelect&&!e&&b.length>0&&document.activeElement?.getAttribute?.("data-testid")!=="ask-question-writein"&&!(window.matchMedia&&window.matchMedia("(pointer:coarse)").matches)){let D=A.current.get(b[0]);D&&D.focus()}`,
 		`return E?(E.scrollHeight-E.clientHeight-E.scrollTop)<=a:!1`,
+		`for(let _i=0;_i<3;_i++)try{e=c(await b(a.lsClient.getLocalUserInfo(p(Fga,{}))));break}`,
 		`_i=k.isComposing||k.keyCode===229||(window.__agyLastCompEnd&&performance.now()-window.__agyLastCompEnd<80)`,
 	}
 	for _, w := range want {
@@ -198,6 +206,8 @@ func TestMobileUXDisabledSkipsMobilePatches(t *testing.T) {
 		"mobile-project-kebab-menu",
 		"mobile-project-add-click-close-sidebar",
 		"mobile-project-sort-order",
+		"mobile-project-settings-export",
+		"mobile-settings-projects",
 		"mobile-user-message-actions",
 		"mobile-conversation-row-actions",
 		"mobile-titlebar-delete-hook",
@@ -640,5 +650,128 @@ func TestSettingsRestoreCustomizationsPatch(t *testing.T) {
 	settingsReplaced := settingsRestoreCustomizationsRe.ReplaceAllString(settingsInput, `g=$1=>$1;`)
 	if !strings.Contains(settingsReplaced, `h=k}else h=g;g=l=>l;if(!c.size)return g(h);`) {
 		t.Fatalf("unexpected settings restore replacement output: %s", settingsReplaced)
+	}
+}
+
+func TestUploaderScriptDropBehavior(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+
+	script := strings.TrimSuffix(strings.TrimPrefix(uploaderScript, "<script>"), "</script>")
+	harness := `
+const assert = require("assert");
+const listeners = {};
+let mouseupCount = 0;
+let dragleaveNullCount = 0;
+let upstreamDropCount = 0;
+let uploadedBatches = [];
+
+global.Event = class Event {
+  constructor(type) {
+    this.type = type;
+    this.defaultPrevented = false;
+    this._stopped = false;
+    this._immediateStopped = false;
+  }
+  preventDefault() { this.defaultPrevented = true; }
+  stopPropagation() { this._stopped = true; }
+  stopImmediatePropagation() { this._stopped = true; this._immediateStopped = true; }
+};
+global.MouseEvent = class MouseEvent extends global.Event {};
+global.DragEvent = class DragEvent extends global.Event {
+  constructor(type, init) {
+    super(type);
+    this.relatedTarget = init && "relatedTarget" in init ? init.relatedTarget : undefined;
+  }
+};
+
+global.window = {
+  location: { search: "", pathname: "/c/test-convo" },
+  addEventListener(type, fn, capture) {
+    if (!listeners[type]) listeners[type] = [];
+    listeners[type].push({ fn, capture: Boolean(capture) });
+  },
+  dispatchEvent(ev) {
+    if (ev.type === "mouseup") mouseupCount++;
+    if (ev.type === "dragleave" && ev.relatedTarget === null) dragleaveNullCount++;
+    const list = (listeners[ev.type] || []).slice();
+    for (const entry of list.filter(x => x.capture)) {
+      entry.fn(ev);
+      if (ev._immediateStopped) return !ev.defaultPrevented;
+    }
+    if (ev._stopped) return !ev.defaultPrevented;
+    for (const entry of list.filter(x => !x.capture)) {
+      entry.fn(ev);
+      if (ev._immediateStopped) return !ev.defaultPrevented;
+    }
+    return !ev.defaultPrevented;
+  }
+};
+global.document = {
+  getElementById() { return null; },
+  createElement() { return { style: {}, appendChild() {}, addEventListener() {} }; },
+  body: { appendChild() {} }
+};
+
+` + script + `
+
+// Register stand-in upstream bubble drop listener (like m5a) and substitute __agyUpload
+window.addEventListener("drop", () => { upstreamDropCount++; }, false);
+window.__agyUpload = (files) => { uploadedBatches.push(Array.from(files)); };
+
+function fireDrop(files, items) {
+  const ev = new Event("drop");
+  ev.dataTransfer = { files, items: items || [] };
+  window.dispatchEvent(ev);
+  return ev;
+}
+
+// 1. Small image (<= 1MB): only upstream drop runs, custom uploader does not run
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([{ name: "small.png", type: "image/png", size: 200 * 1024 }]);
+assert.strictEqual(uploadedBatches.length, 0, "small image should not trigger custom upload");
+assert.strictEqual(upstreamDropCount, 1, "small image should reach upstream drop listener");
+
+// 2. Large image (> 1MB): only upstream drop runs (upstream compresses via canvas), custom uploader does not run
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop([
+  { name: "large.png", type: "image/png", size: 5 * 1024 * 1024 },
+  { name: "photo.jpg", type: "image/jpeg", size: 3 * 1024 * 1024 }
+]);
+assert.strictEqual(uploadedBatches.length, 0, "large native images must not trigger duplicate custom upload");
+assert.strictEqual(upstreamDropCount, 1, "large native images must reach upstream drop listener");
+
+// 3. Non-image or unsupported file: custom uploader runs, propagation to upstream is stopped, overlays are dismissed
+uploadedBatches = [];
+upstreamDropCount = 0;
+mouseupCount = 0;
+dragleaveNullCount = 0;
+const archiveFile = { name: "bundle.zip", type: "application/zip", size: 4 * 1024 * 1024 };
+const dropEv = fireDrop([archiveFile]);
+assert.strictEqual(uploadedBatches.length, 1, "non-image file should trigger custom upload");
+assert.strictEqual(uploadedBatches[0].length, 1);
+assert.strictEqual(uploadedBatches[0][0].name, "bundle.zip");
+assert.strictEqual(upstreamDropCount, 0, "stopPropagation must prevent upstream drop listener from running simultaneously");
+assert.strictEqual(dropEv.defaultPrevented, true, "drop event must be defaultPrevented");
+assert.ok(mouseupCount >= 1, "mouseup must be dispatched to reset context drop overlay");
+assert.ok(dragleaveNullCount >= 1, "dragleave with relatedTarget:null must be dispatched to reset media drop overlay");
+
+// 4. Directory drop: custom uploader must ignore directories and let upstream zip handler run
+uploadedBatches = [];
+upstreamDropCount = 0;
+fireDrop(
+  [{ name: "my-folder", type: "", size: 0 }],
+  [{ kind: "file", webkitGetAsEntry: () => ({ isDirectory: true, name: "my-folder" }) }]
+);
+assert.strictEqual(uploadedBatches.length, 0, "directory drop must not trigger custom file upload");
+assert.strictEqual(upstreamDropCount, 1, "directory drop must reach upstream folder zip listener");
+`
+
+	if out, err := exec.Command(node, "-e", harness).CombinedOutput(); err != nil {
+		t.Fatalf("uploaderScript drop harness failed: %v\n%s", err, out)
 	}
 }
