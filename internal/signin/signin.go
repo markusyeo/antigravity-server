@@ -36,7 +36,9 @@ const (
 	// loginTimeout bounds the Login RPC, which blocks until the callback arrives.
 	loginTimeout = 15 * time.Minute
 	// sessionTTL is how long a captured URL stays usable before we start over.
-	sessionTTL = 14 * time.Minute
+	// Keep this short so that if the language server restarts (e.g., on OOM or update)
+	// and loses its callback listener, a retry does not stay stuck for 14 minutes.
+	sessionTTL = 2 * time.Minute
 )
 
 var (
@@ -63,6 +65,11 @@ type Coordinator struct {
 
 	mu      sync.Mutex
 	pending *session
+
+	authMu     sync.Mutex
+	cached     authState
+	cachedAt   time.Time
+	refreshing bool
 }
 
 // New returns a Coordinator. urlFile is where the browser shim records URLs; it
@@ -78,12 +85,119 @@ func (c *Coordinator) Available() bool {
 	return c.instance != nil && c.urlFile != ""
 }
 
-// SignedIn reports whether Antigravity already holds valid credentials.
+// authState is what the language server last said about the credentials.
+type authState int
+
+const (
+	authUnknown authState = iota
+	authSignedIn
+	authSignedOut
+)
+
+// SignedIn reports whether Antigravity already holds valid credentials,
+// caching positive results for 30 seconds (with background revalidation once
+// stale) and negative results for 3 seconds to avoid querying the language
+// server on every HTTP request. A failed query counts as not signed in.
 func (c *Coordinator) SignedIn(ctx context.Context) bool {
+	return c.authStatus(ctx) == authSignedIn
+}
+
+// SignedInFresh queries the language server directly, bypassing the in-memory
+// cache, and updates the cached state with the fresh answer. Use it on explicit
+// sign-in routes so logging out in the web app and clicking Sign In never
+// serves a stale "Already signed in" page.
+func (c *Coordinator) SignedInFresh(ctx context.Context) bool {
+	return c.queryAuthStatus(ctx) == authSignedIn
+}
+
+// NeedsSignIn reports whether the language server answered that it holds no
+// valid credentials. Unlike !SignedIn it is false when the question went
+// unanswered, so a slow or failed query never sends a signed-in user to the
+// sign-in page.
+func (c *Coordinator) NeedsSignIn(ctx context.Context) bool {
+	return c.authStatus(ctx) == authSignedOut
+}
+
+// NeedsSignInFresh queries the language server directly, bypassing the
+// in-memory cache, and reports whether it answered that it holds no valid
+// credentials.
+func (c *Coordinator) NeedsSignInFresh(ctx context.Context) bool {
+	return c.queryAuthStatus(ctx) == authSignedOut
+}
+
+func (c *Coordinator) authStatus(ctx context.Context) authState {
 	if c.instance == nil {
-		return false
+		return authUnknown
 	}
-	return c.instance.SignedIn(ctx)
+
+	c.authMu.Lock()
+	age := time.Since(c.cachedAt)
+	if !c.cachedAt.IsZero() {
+		if c.cached == authSignedIn {
+			if age >= 30*time.Second && !c.refreshing {
+				c.refreshing = true
+				prevCachedAt := c.cachedAt
+				go c.refreshSignedIn(prevCachedAt)
+			}
+			c.authMu.Unlock()
+			return authSignedIn
+		}
+		if age < 3*time.Second {
+			state := c.cached
+			c.authMu.Unlock()
+			return state
+		}
+	}
+	c.authMu.Unlock()
+
+	return c.queryAuthStatus(ctx)
+}
+
+func (c *Coordinator) queryAuthStatus(ctx context.Context) authState {
+	if c.instance == nil {
+		return authUnknown
+	}
+
+	state := authSignedOut
+	signedIn, err := c.instance.AuthStatus(ctx)
+	switch {
+	case err != nil:
+		state = authUnknown
+	case signedIn:
+		state = authSignedIn
+	}
+
+	c.authMu.Lock()
+	c.cached = state
+	c.cachedAt = time.Now()
+	c.authMu.Unlock()
+
+	return state
+}
+
+// refreshSignedIn revalidates a previously confirmed signed-in state in the
+// background so page navigations never block on a synchronous GetAuthStatus RPC
+// once the server is signed in.
+func (c *Coordinator) refreshSignedIn(prevCachedAt time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	signedIn, err := c.instance.AuthStatus(ctx)
+
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+	c.refreshing = false
+	if c.cachedAt.IsZero() || !c.cachedAt.Equal(prevCachedAt) {
+		return
+	}
+	if err == nil {
+		if signedIn {
+			c.cached = authSignedIn
+		} else {
+			c.cached = authSignedOut
+		}
+	}
+	c.cachedAt = time.Now()
 }
 
 // Begin starts a sign-in attempt and returns the Google consent URL to open. If
@@ -205,12 +319,19 @@ func (c *Coordinator) Complete(ctx context.Context, pasted string) error {
 	}
 
 	if _, err := fetch(ctx, pending.callbackURL+"?"+query); err != nil {
+		// If the callback listener is gone (e.g. language server restarted),
+		// discard the stale session so the user's next attempt gets a fresh port.
+		c.finish()
 		return fmt.Errorf("could not hand the code to Antigravity: %w", err)
 	}
 
 	// The Login RPC needs a moment to exchange the code for a token.
 	for i := 0; i < 20; i++ {
 		if c.instance.SignedIn(ctx) {
+			c.authMu.Lock()
+			c.cached = authSignedIn
+			c.cachedAt = time.Now()
+			c.authMu.Unlock()
 			c.finish()
 			return nil
 		}

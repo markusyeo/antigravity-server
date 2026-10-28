@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,6 +111,24 @@ func get(t *testing.T, base, path, accept string) *http.Response {
 	return resp
 }
 
+func getWithHeader(t *testing.T, base, path, key, value string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, base+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(key, value)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
 // body returns the response body, transparently gunzipping what the proxy
 // re-encoded. get sets Accept-Encoding explicitly, which turns off the Go
 // client's own transparent decompression.
@@ -199,22 +218,145 @@ func TestProxySkipsEncodedBodies(t *testing.T) {
 	}
 }
 
-func TestProxyCachesKeyedBundleAndNotHTML(t *testing.T) {
+func TestProxyRevalidatesBundleWithETagAndNeverCachesHTML(t *testing.T) {
 	front, _ := newTestProxy(t, upstream(t))
 
-	keyed := get(t, front.URL, "/main.js?agy=k1", "")
-	if !strings.Contains(keyed.Header.Get("Cache-Control"), "immutable") {
-		t.Errorf("keyed bundle should be cacheable, got %q", keyed.Header.Get("Cache-Control"))
+	first := get(t, front.URL, "/main.js?agy=k1", "")
+	tag := first.Header.Get("ETag")
+	if tag == "" {
+		t.Fatal("bundle response must carry an ETag")
+	}
+	if got := first.Header.Get("Cache-Control"); got != "private, no-cache" {
+		t.Errorf("bundle must be revalidated and kept out of shared caches, got %q", got)
 	}
 
-	unkeyed := get(t, front.URL, "/main.js", "")
-	if unkeyed.Header.Get("Cache-Control") != "no-store" {
-		t.Errorf("unkeyed bundle must not be cached, got %q", unkeyed.Header.Get("Cache-Control"))
+	// Second request is served from the in-memory copy and must keep the same tag and policy.
+	again := get(t, front.URL, "/main.js?agy=k1", "")
+	if again.Header.Get("ETag") != tag || again.Header.Get("Cache-Control") != "private, no-cache" {
+		t.Errorf("cached bundle changed validators: etag %q, cache-control %q", again.Header.Get("ETag"), again.Header.Get("Cache-Control"))
+	}
+
+	for _, inm := range []string{tag, "W/" + tag, `"other", ` + tag} {
+		resp := getWithHeader(t, front.URL, "/main.js?agy=k1", "If-None-Match", inm)
+		if resp.StatusCode != http.StatusNotModified {
+			t.Errorf("If-None-Match %s: want 304, got %d", inm, resp.StatusCode)
+		}
+		if n := len(body(t, resp)); n != 0 {
+			t.Errorf("If-None-Match %s: 304 must not carry a body, got %d bytes", inm, n)
+		}
+	}
+
+	stale := getWithHeader(t, front.URL, "/main.js?agy=k1", "If-None-Match", `"stale"`)
+	if stale.StatusCode != http.StatusOK || len(body(t, stale)) == 0 {
+		t.Errorf("stale ETag must get the full patched bundle, got %d", stale.StatusCode)
 	}
 
 	html := get(t, front.URL, "/", "text/html")
 	if html.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("HTML must not be cached, got %q", html.Header.Get("Cache-Control"))
+	}
+}
+
+func TestProxyStripsValidatorsBeforeFetchingBundle(t *testing.T) {
+	var sawINM, sawIMS string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
+		sawINM = r.Header.Get("If-None-Match")
+		sawIMS = r.Header.Get("If-Modified-Since")
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Header().Set("ETag", `"upstream"`)
+		w.Header().Set("Last-Modified", "Mon, 01 Jan 2024 00:00:00 GMT")
+		_, _ = w.Write([]byte(stubBundle))
+	})
+	ls := httptest.NewTLSServer(mux)
+	t.Cleanup(ls.Close)
+	front, _ := newTestProxy(t, ls)
+
+	req, _ := http.NewRequest(http.MethodGet, front.URL+"/main.js?agy=k1", nil)
+	req.Header.Set("If-None-Match", `"from-browser"`)
+	req.Header.Set("If-Modified-Since", "Mon, 01 Jan 2024 00:00:00 GMT")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if sawINM != "" || sawIMS != "" {
+		t.Errorf("validators reached upstream: If-None-Match %q, If-Modified-Since %q", sawINM, sawIMS)
+	}
+	if resp.Header.Get("ETag") == `"upstream"` || resp.Header.Get("Last-Modified") != "" {
+		t.Errorf("upstream validators leaked onto the patched bundle: etag %q, last-modified %q", resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"))
+	}
+}
+
+func TestProxyHeadDoesNotPolluteMainJSCache(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+
+	req, _ := http.NewRequest(http.MethodHead, front.URL+"/main.js?agy=k1", nil)
+	headResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headResp.Body.Close()
+
+	getResp := get(t, front.URL, "/main.js?agy=k1", "")
+	data := body(t, getResp)
+	if len(data) == 0 {
+		t.Fatal("GET returned empty body after HEAD request")
+	}
+	if !strings.Contains(data, "window.location") {
+		t.Error("GET did not return expected patched bundle content")
+	}
+
+	reqFast, _ := http.NewRequest(http.MethodHead, front.URL+"/main.js?agy=k1", nil)
+	fastResp, err := http.DefaultClient.Do(reqFast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fastResp.Body.Close()
+	if fastResp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK on cached HEAD, got %d", fastResp.StatusCode)
+	}
+	if fastResp.Header.Get("ETag") != getResp.Header.Get("ETag") {
+		t.Errorf("HEAD ETag %q did not match GET ETag %q", fastResp.Header.Get("ETag"), getResp.Header.Get("ETag"))
+	}
+}
+
+func TestProxySameOriginUpgrade(t *testing.T) {
+	cases := []struct {
+		name      string
+		host      string
+		origin    string
+		xfh       string
+		publicURL string
+		want      bool
+	}{
+		{"same host", "agy.example.com", "https://agy.example.com", "", "", true},
+		{"same host with matching port", "192.168.1.50:8765", "http://192.168.1.50:8765", "", "", true},
+		{"same host with mismatching port", "192.168.1.50:8765", "http://192.168.1.50:9000", "", "", false},
+		{"host with port vs origin on default port", "agy.example.com:8443", "https://agy.example.com", "", "", false},
+		{"forwarded host", "127.0.0.1:8765", "https://agy.example.com", "agy.example.com", "", true},
+		{"forwarded host mismatching port", "127.0.0.1:8765", "http://192.168.1.50:9000", "192.168.1.50:8765", "", false},
+		{"proxy forwards only loopback host", "127.0.0.1:8765", "https://agy.example.com", "", "", true},
+		{"sibling subdomain rejected", "agy.example.com", "https://evil.example.com", "", "", false},
+		{"public URL matches", "internal-docker:8765", "https://custom.example.com", "", "https://custom.example.com", true},
+		{"opaque origin rejected", "agy.example.com", "null", "", "", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Proxy{opts: Options{PublicURL: tc.publicURL}}
+			req, _ := http.NewRequest(http.MethodGet, "http://"+tc.host+"/connect-websocket", nil)
+			req.Host = tc.host
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Origin", tc.origin)
+			if tc.xfh != "" {
+				req.Header.Set("X-Forwarded-Host", tc.xfh)
+			}
+			if got := p.sameOriginUpgrade(req); got != tc.want {
+				t.Errorf("sameOriginUpgrade() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -467,5 +609,50 @@ func TestProxyIdleTracking(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if !p.IsIdle(20 * time.Millisecond) {
 		t.Errorf("expected IsIdle(20ms) to be true after 30ms elapsed")
+	}
+}
+
+func TestProxyAddsCacheControlToStaticAssets(t *testing.T) {
+	front, _ := newTestProxy(t, upstream(t))
+
+	resp := get(t, front.URL, "/prism_bundle.js", "*/*")
+	if got := resp.Header.Get("Cache-Control"); got != staticAssetCacheControl {
+		t.Errorf("static asset Cache-Control = %q, want %q", got, staticAssetCacheControl)
+	}
+}
+
+func TestProxyCachesPatchedRootHTML(t *testing.T) {
+	var htmlHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		_, _ = w.Write([]byte(stubBundle))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		htmlHits.Add(1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(indexHTML))
+	})
+	ls := httptest.NewTLSServer(mux)
+	t.Cleanup(ls.Close)
+
+	front, _ := newTestProxy(t, ls)
+
+	first := get(t, front.URL, "/", "text/html")
+	firstBody := body(t, first)
+	if htmlHits.Load() != 1 {
+		t.Fatalf("expected 1 upstream HTML fetch, got %d", htmlHits.Load())
+	}
+
+	second := get(t, front.URL, "/", "text/html")
+	secondBody := body(t, second)
+	if htmlHits.Load() != 1 {
+		t.Errorf("second root HTML request hit upstream (%d fetches), want served from memory", htmlHits.Load())
+	}
+	if secondBody != firstBody {
+		t.Error("cached HTML body differs from initial patched HTML")
+	}
+	if got := second.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("cached HTML Cache-Control = %q, want no-store", got)
 	}
 }

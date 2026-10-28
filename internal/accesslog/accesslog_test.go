@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -140,5 +142,36 @@ func TestShortNameTruncatesRunes(t *testing.T) {
 	}
 	if len([]rune(got)) != 40 {
 		t.Fatalf("expected 40 runes, got %d runes (%q)", len([]rune(got)), got)
+	}
+}
+
+func TestOpenFileRotatesAtMaxBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "access.log")
+	w, err := OpenFile(path, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	if _, err := w.Write([]byte("first-entry-line-1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("second-entry-triggers-rotate\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("expected rotated log %s.1 to exist: %v", path, err)
+	}
+	if string(rotated) != "first-entry-line-1\n" {
+		t.Errorf("rotated log = %q, want first entry", string(rotated))
+	}
+	if string(current) != "second-entry-triggers-rotate\n" {
+		t.Errorf("current log = %q, want second entry", string(current))
 	}
 }

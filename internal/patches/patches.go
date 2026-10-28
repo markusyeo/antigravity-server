@@ -58,6 +58,10 @@ type Options struct {
 	Disabled map[string]bool
 	// Debug injects the mobile geometry tracer, which reports to the server.
 	Debug bool
+	// WebSocketTransportMissing is set by the proxy once the bundle has been
+	// served without the websocket-transport-default patch matching. The bundle
+	// then uses fetch streaming and never claims an early socket.
+	WebSocketTransportMissing bool
 }
 
 // Patch is a single declarative rewrite of the served bundle.
@@ -77,6 +81,14 @@ type Patch struct {
 	// Replace is the replacement text; ReplaceFn takes precedence when set.
 	Replace   string
 	ReplaceFn func(Options) string
+	// ReplaceMatch, for Regexp patches, chooses the replacement from what the
+	// pattern captured, for a rewrite that must differ between two spellings of
+	// the same upstream code. Its result is used as written, with no $1
+	// expansion, and takes precedence over Replace and ReplaceFn. Replace should
+	// still describe the current spelling, because it is what the cache key
+	// hashes. The cache key does not see ReplaceMatch, so a change that only
+	// touches ReplaceMatch must also change Replace or the release version.
+	ReplaceMatch func(groups [][]byte, opts Options) string
 
 	// Required marks patches without which remote access cannot work at all.
 	Required bool
@@ -202,7 +214,12 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 		case Regexp:
 			loc := p.FindRe.FindSubmatchIndex(body)
 			if loc != nil {
-				repl := p.FindRe.Expand(nil, []byte(p.replacement(opts)), body, loc)
+				var repl []byte
+				if p.ReplaceMatch != nil {
+					repl = []byte(p.ReplaceMatch(submatches(body, loc), opts))
+				} else {
+					repl = p.FindRe.Expand(nil, []byte(p.replacement(opts)), body, loc)
+				}
 				var out []byte
 				out = append(out, body[:loc[0]]...)
 				out = append(out, repl...)
@@ -226,15 +243,28 @@ func Apply(target Target, body []byte, opts Options) ([]byte, Report) {
 	return body, report
 }
 
+// submatches returns the text of every group in a match, with nil for a group
+// that did not take part.
+func submatches(body []byte, loc []int) [][]byte {
+	out := make([][]byte, len(loc)/2)
+	for i := range out {
+		if loc[2*i] >= 0 {
+			out[i] = body[loc[2*i]:loc[2*i+1]]
+		}
+	}
+	return out
+}
+
 // CacheKey derives a short, stable fingerprint of the applied patch set. It is
-// appended to the /main.js URL so browsers may cache the 9 MB bundle
-// aggressively, yet re-fetch it the moment the patches or version change.
+// appended to the /main.js URL so the bundle URL changes the moment the patches
+// or version change. It does not cover language server updates; the proxy's
+// ETag revalidation is what keeps browsers from running a stale bundle.
 func CacheKey(version string, opts Options) string {
 	h := sha256.New()
 	if version != "" {
 		h.Write([]byte(version))
 	} else {
-		h.Write([]byte("v0.2.0"))
+		h.Write([]byte("v0.2.1-fix"))
 	}
 	h.Write([]byte{0})
 	h.Write([]byte(opts.WorkspaceRoot))

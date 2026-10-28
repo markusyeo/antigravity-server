@@ -128,6 +128,7 @@ func (r *runner) start() error {
 	p, err := proxy.New(proxy.Options{
 		TargetPort:      instance.Port,
 		TargetCSRFToken: instance.CSRFToken,
+		PublicURL:       r.cfg.PublicURL,
 		Patch:           patchOpts,
 		OnReport: func(target patches.Target, report patches.Report) {
 			tracker.Record(target, report)
@@ -137,11 +138,13 @@ func (r *runner) start() error {
 	if err != nil {
 		return err
 	}
-	warmCtx, warmCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if err := p.WarmBundle(warmCtx); err != nil {
-		warn("could not prepare the web bundle: %v", err)
-	}
-	warmCancel()
+	go func() {
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer warmCancel()
+		if err := p.WarmBundle(warmCtx); err != nil {
+			warn("could not pre-patch the web bundle, the first page load will be slower: %v", err)
+		}
+	}()
 
 	mode, err := tlsfront.ParseMode(r.cfg.TLS)
 	if err != nil {
@@ -241,7 +244,8 @@ func (r *runner) start() error {
 		updater.StartAutoUpdater(uploaderCtx, r.cfg, reloadLS, isIdle)
 	}
 
-	ui.NewSignIn(signin.New(instance, r.shimURLFile)).Register(publicMux)
+	coordinator := signin.New(instance, r.shimURLFile)
+	ui.NewSignIn(coordinator).Register(publicMux)
 	if r.cfg.Debug {
 		if debug, err := ui.NewDebug(r.cfg.Path("mobile-debug.log")); err != nil {
 			warn("could not open the mobile debug log: %v", err)
@@ -250,7 +254,9 @@ func (r *runner) start() error {
 			info("Mobile debug tracing on, writing to %s", dim(debug.Path()))
 		}
 	}
-	publicMux.Handle("/", p.Handler())
+
+	var rootHandler http.Handler = wrapRootWithSignInRedirect(p.Handler(), coordinator)
+	publicMux.Handle("/", rootHandler)
 
 	localUI := ui.NewLocal(ui.LocalOptions{
 		Version:       version,
@@ -270,7 +276,7 @@ func (r *runner) start() error {
 
 	var accessLogger *accesslog.Logger
 	if path := r.accessLogFile(); path != "" {
-		logFile, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		logFile, err := accesslog.OpenFile(path, accesslog.DefaultMaxBytes)
 		if err != nil {
 			warn("could not open the access log: %v", err)
 		} else {
@@ -299,7 +305,7 @@ func (r *runner) start() error {
 	controlURL := fmt.Sprintf("http://127.0.0.1:%d/", localPort)
 
 	statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	signedIn := instance.SignedIn(statusCtx)
+	signedIn := coordinator.SignedIn(statusCtx)
 	statusCancel()
 
 	r.printReady(publicPort, controlURL, generated, signedIn)
@@ -347,11 +353,7 @@ func (r *runner) start() error {
 }
 
 func listen(host string, port int) (net.Listener, error) {
-	listener, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
-	if err == nil || port == 0 {
-		return listener, err
-	}
-	return net.Listen("tcp", net.JoinHostPort(host, "0"))
+	return net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 }
 
 func (r *runner) syncRemoteControlSetting() {
@@ -400,6 +402,15 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 			"Or point at an existing binary: agy-server serve --language-server /path/to/language_server")
 	}
 
+	shimDir := r.cfg.Path("browser-shim")
+	urlFile := r.cfg.Path("auth-url.txt")
+	if err := lsproc.WriteBrowserShim(shimDir, urlFile); err != nil {
+		warn("could not install the sign-in helper: %v", err)
+		shimDir = ""
+	} else {
+		r.shimURLFile = urlFile
+	}
+
 	filter := lsproc.Filter{BinaryPath: binary}
 
 	if instance, err := lsproc.FindMatching(filter); err == nil {
@@ -416,13 +427,6 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		return nil, err
 	}
 
-	shimDir := r.cfg.Path("browser-shim")
-	urlFile := r.cfg.Path("auth-url.txt")
-	if err := lsproc.WriteBrowserShim(shimDir, urlFile); err != nil {
-		warn("could not install the sign-in helper: %v", err)
-		shimDir = ""
-	}
-
 	csrfToken := r.loadOrCreateCSRFToken()
 
 	cmd, err := lsproc.LaunchHeadless(lsproc.HeadlessOptions{
@@ -432,15 +436,17 @@ func (r *runner) resolveHeadless(ctx context.Context) (*lsproc.Instance, error) 
 		LogWriter:      logFile,
 		BrowserShimDir: shimDir,
 	})
+	_ = logFile.Close()
 	if err != nil {
 		return nil, err
 	}
-	if shimDir != "" {
-		r.shimURLFile = urlFile
-	}
+	go func() { _ = cmd.Wait() }()
 
 	instance, err := r.waitForServer(ctx, 120*time.Second, lsproc.Filter{PID: cmd.Process.Pid}, logPath)
 	if err != nil {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		return nil, err
 	}
 	if instance.CSRFToken == "" {
@@ -560,11 +566,20 @@ func (r *runner) loginBaseURL(port int) string {
 	if r.cfg.PublicURL != "" {
 		return strings.TrimRight(r.cfg.PublicURL, "/")
 	}
-	host := netinfo.Local().Primary()
-	if r.tailscaleName != "" {
-		host = r.tailscaleName
+	return r.url(r.primaryHost(netinfo.Local()), port)
+}
+
+func (r *runner) primaryHost(local netinfo.Info) string {
+	if r.front != nil && r.front.Host != "" {
+		return r.front.Host
 	}
-	return r.url(host, port)
+	if local.LAN != "" {
+		return local.LAN
+	}
+	if r.tailscaleName != "" {
+		return r.tailscaleName
+	}
+	return local.Primary()
 }
 
 // resolveTailscaleName finds this node's MagicDNS name so the control panel can
@@ -695,4 +710,33 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
+}
+
+func wrapRootWithSignInRedirect(fallback http.Handler, coordinator *signin.Coordinator) http.Handler {
+	if coordinator == nil || !coordinator.Available() {
+		return fallback
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isOnboarding := r.URL.Path == "/onboarding" || r.URL.Path == "/onboarding/"
+		if r.Method == http.MethodGet && (r.URL.Path == "/" || isOnboarding) {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			// Only an explicit "not signed in" redirects. The language server
+			// can take longer than this timeout to answer when its own caches
+			// have expired, and that must not look like a lost login. On
+			// /onboarding routes (reached right after signing out), bypass the
+			// 30s positive cache so refreshing redirects immediately.
+			needsSignIn := false
+			if isOnboarding {
+				needsSignIn = coordinator.NeedsSignInFresh(ctx)
+			} else {
+				needsSignIn = coordinator.NeedsSignIn(ctx)
+			}
+			if needsSignIn {
+				http.Redirect(w, r, ui.SignInPath, http.StatusFound)
+				return
+			}
+		}
+		fallback.ServeHTTP(w, r)
+	})
 }

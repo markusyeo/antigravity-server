@@ -43,7 +43,7 @@ func patchRows(report patches.Report) []PatchRow {
 	for _, res := range report {
 		row := PatchRow{ID: res.ID, Desc: res.Desc}
 		switch res.Status {
-		case patches.StatusApplied:
+		case patches.StatusApplied, patches.StatusNotNeeded:
 			row.Mark, row.Class = "✓", "ok"
 		case patches.StatusDisabled:
 			row.Mark, row.Class = "–", "off"
@@ -244,6 +244,11 @@ func contextWithTimeout(r *http.Request, d time.Duration) (context.Context, cont
 func isPost(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	// Reject cross-site POST requests to protect the unauthenticated loopback control panel.
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return false
 	}
 	return true

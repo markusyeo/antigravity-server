@@ -13,8 +13,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -34,24 +37,30 @@ type ReportFunc func(target patches.Target, report patches.Report)
 type Options struct {
 	TargetPort      int
 	TargetCSRFToken string
+	PublicURL       string
 	Patch           patches.Options
 	OnReport        ReportFunc
 }
 
 // Proxy is a patching reverse proxy in front of one language server.
 type Proxy struct {
-	handler        http.Handler
-	opts           Options
-	reported       sync.Map
-	activeConns    atomic.Int64
-	lastActivityNs atomic.Int64
-	bundleMu       sync.Mutex
-	bundle         *bundleCache
-	transport      http.RoundTripper
+	handler             http.Handler
+	opts                Options
+	reported            sync.Map
+	activeConns         atomic.Int64
+	lastActivityNs      atomic.Int64
+	bundleMu            sync.RWMutex
+	bundle              *bundleCache
+	htmlMu              sync.RWMutex
+	cachedHTML          []byte
+	cachedHTMLMissingWS bool
+	wsTransportMissing  atomic.Bool
+	transport           http.RoundTripper
 }
 
 type bundleCache struct {
 	digest         [32]byte
+	etag           string
 	identity, gzip []byte
 }
 
@@ -137,6 +146,49 @@ func (p *Proxy) Handler() http.Handler {
 			p.activeConns.Add(-1)
 			p.touchActivity()
 		}()
+
+		if isWebSocketUpgrade(r) && !p.sameOriginUpgrade(r) {
+			http.Error(w, "cross-origin WebSocket upgrade rejected", http.StatusForbidden)
+			return
+		}
+
+		// Fast-path: Serve cached patched root HTML immediately from memory (0ms latency)
+		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			if html := p.cachedRootHTML(); html != nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Length", strconv.Itoa(len(html)))
+				if r.Method == http.MethodGet {
+					_, _ = w.Write(html)
+				}
+				return
+			}
+		}
+
+		if r.URL.Path == "/main.js" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			if b := p.cachedBundle(); b != nil {
+				if etagMatches(r.Header.Get("If-None-Match"), b.etag) {
+					setBundleValidators(w.Header(), b.etag)
+					w.Header().Add("Vary", "Accept-Encoding")
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				if r.Method == http.MethodHead {
+					setBundleValidators(w.Header(), b.etag)
+					w.Header().Add("Vary", "Accept-Encoding")
+					payload := b.identity
+					if acceptsGzip(r) && len(payload) >= minCompressBytes {
+						payload = b.gzip
+						w.Header().Set("Content-Encoding", "gzip")
+					}
+					w.Header().Set("Content-Type", "application/javascript")
+					w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			}
+		}
+
 		p.handler.ServeHTTP(w, r)
 	})
 }
@@ -210,6 +262,9 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	}
 	target, ok := targetFor(resp)
 	if !ok {
+		if resp.StatusCode == http.StatusOK && resp.Request != nil && (resp.Request.Method == http.MethodGet || resp.Request.Method == http.MethodHead) && isCacheableStaticAsset(resp.Request.URL.Path) {
+			resp.Header.Set("Cache-Control", staticAssetCacheControl)
+		}
 		return nil
 	}
 
@@ -219,21 +274,34 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		return err
 	}
 
+	opts := p.opts.Patch
+	if target == patches.HTML {
+		opts.WebSocketTransportMissing = p.wsTransportMissing.Load()
+	}
+
 	started := time.Now()
 	var patched []byte
+	var tag string
 	if target == patches.MainJS {
 		digest := sha256.Sum256(body)
 		p.bundleMu.Lock()
 		if p.bundle == nil || p.bundle.digest != digest {
-			identity, report := patches.Apply(target, body, p.opts.Patch)
+			identity, report := patches.Apply(target, body, opts)
+			p.wsTransportMissing.Store(transportPatchMissing(report))
 			p.report(target, report)
 			var compressed bytes.Buffer
 			writer := gzip.NewWriter(&compressed)
 			_, _ = writer.Write(identity)
 			_ = writer.Close()
-			p.bundle = &bundleCache{digest: digest, identity: identity, gzip: compressed.Bytes()}
+			p.bundle = &bundleCache{
+				digest:   digest,
+				etag:     bundleETag(identity),
+				identity: identity,
+				gzip:     compressed.Bytes(),
+			}
 		}
 		patched = p.bundle.identity
+		tag = p.bundle.etag
 		resp.Header.Add("Vary", "Accept-Encoding")
 		if timing, ok := resp.Request.Context().Value(requestTimingKey{}).(requestTiming); ok && timing.gzip && len(patched) >= minCompressBytes {
 			patched = p.bundle.gzip
@@ -242,7 +310,7 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		p.bundleMu.Unlock()
 	} else {
 		var report patches.Report
-		patched, report = patches.Apply(target, body, p.opts.Patch)
+		patched, report = patches.Apply(target, body, opts)
 		p.report(target, report)
 	}
 	resp.Header.Add("Server-Timing", fmt.Sprintf("patch;dur=%.1f", float64(time.Since(started).Microseconds())/1000))
@@ -256,13 +324,162 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 
 	if target == patches.HTML {
 		resp.Header.Set("Cache-Control", "no-store")
-	} else if resp.Request.URL.Query().Get("agy") != "" {
-		resp.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
+		if resp.Request != nil && resp.Request.Method == http.MethodGet && resp.Request.URL.Path == "/" && len(body) > 0 {
+			p.htmlMu.Lock()
+			p.cachedHTML = patched
+			p.cachedHTMLMissingWS = opts.WebSocketTransportMissing
+			p.htmlMu.Unlock()
+		}
 	} else {
-		resp.Header.Set("Cache-Control", "no-store")
+		setBundleValidators(resp.Header, tag)
 	}
 
 	return nil
+}
+
+func transportPatchMissing(report patches.Report) bool {
+	for _, res := range report {
+		if res.ID == "websocket-transport-default" {
+			return res.Status == patches.StatusMissing
+		}
+	}
+	return false
+}
+
+func (p *Proxy) cachedRootHTML() []byte {
+	p.htmlMu.RLock()
+	defer p.htmlMu.RUnlock()
+	if p.cachedHTML == nil || p.cachedHTMLMissingWS != p.wsTransportMissing.Load() {
+		return nil
+	}
+	return p.cachedHTML
+}
+
+const staticAssetCacheControl = "private, max-age=3600, stale-while-revalidate=86400"
+
+func isCacheableStaticAsset(path string) bool {
+	if path == "/main.js" || strings.HasPrefix(path, "/__agy/") {
+		return false
+	}
+	for _, ext := range []string{".css", ".js", ".svg", ".png", ".ico", ".woff2", ".woff", ".ttf", ".mp3", ".wasm"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Proxy) cachedBundle() *bundleCache {
+	p.bundleMu.RLock()
+	defer p.bundleMu.RUnlock()
+	return p.bundle
+}
+
+const bundleCacheControl = "private, no-cache"
+
+func bundleETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+func setBundleValidators(h http.Header, tag string) {
+	h.Set("Cache-Control", bundleCacheControl)
+	h.Set("ETag", tag)
+	h.Del("Last-Modified")
+}
+
+func etagMatches(header, tag string) bool {
+	if header == "" || tag == "" {
+		return false
+	}
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimPrefix(strings.TrimSpace(part), "W/")
+		if part == "*" || part == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+func (p *Proxy) sameOriginUpgrade(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		log.Printf("[proxy] rejecting WebSocket upgrade: malformed Origin %q", origin)
+		return false
+	}
+	originHost := u.Hostname()
+	originPort := u.Port()
+	if originPort == "" {
+		if strings.EqualFold(u.Scheme, "https") || strings.EqualFold(u.Scheme, "wss") {
+			originPort = "443"
+		} else if strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "ws") {
+			originPort = "80"
+		}
+	}
+
+	candidates := []string{
+		r.Host,
+		firstValue(r.Header.Get("X-Forwarded-Host")),
+	}
+	if p.opts.PublicURL != "" {
+		if pu, err := url.Parse(p.opts.PublicURL); err == nil && pu.Host != "" {
+			candidates = append(candidates, pu.Host)
+		}
+	}
+
+	verifiable := false
+	for _, h := range candidates {
+		candHost, candPort := splitHostMaybePort(h)
+		if candHost == "" {
+			continue
+		}
+		if strings.EqualFold(candHost, originHost) {
+			if candPort == "" || candPort == originPort {
+				return true
+			}
+		}
+		if !isLoopbackName(candHost) {
+			verifiable = true
+		}
+	}
+
+	if !verifiable {
+		log.Printf("[proxy] warning: WebSocket upgrade from Origin %q accepted without Host verification (reverse proxy forwarded no external Host header)", origin)
+		return true
+	}
+
+	log.Printf("[proxy] rejected cross-origin WebSocket upgrade: Origin=%q does not match Host=%q or X-Forwarded-Host=%q. Ensure your reverse proxy forwards Host (e.g. proxy_set_header Host $host;)", origin, r.Host, r.Header.Get("X-Forwarded-Host"))
+	return false
+}
+
+func splitHostMaybePort(hostport string) (string, string) {
+	if h, port, err := net.SplitHostPort(hostport); err == nil {
+		return h, port
+	}
+	return strings.Trim(hostport, "[]"), ""
+}
+
+func firstValue(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+func isLoopbackName(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (p *Proxy) report(target patches.Target, report patches.Report) {

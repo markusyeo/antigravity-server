@@ -225,12 +225,13 @@ func (i *Instance) Call(ctx context.Context, method string, body any) ([]byte, e
 	return data, nil
 }
 
-// SignedIn reports whether the language server currently holds valid Antigravity
-// credentials.
-func (i *Instance) SignedIn(ctx context.Context) bool {
+// AuthStatus queries the language server for whether valid Antigravity
+// credentials are held. Unlike SignedIn, it returns the underlying error when
+// the RPC fails so callers can distinguish "signed out" from "unreachable".
+func (i *Instance) AuthStatus(ctx context.Context) (bool, error) {
 	data, err := i.Call(ctx, "GetAuthStatus", nil)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	var out struct {
@@ -239,9 +240,16 @@ func (i *Instance) SignedIn(ctx context.Context) bool {
 		} `json:"authResult"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return false
+		return false, err
 	}
-	return out.AuthResult.HasValidAuth
+	return out.AuthResult.HasValidAuth, nil
+}
+
+// SignedIn reports whether the language server currently holds valid Antigravity
+// credentials.
+func (i *Instance) SignedIn(ctx context.Context) bool {
+	ok, err := i.AuthStatus(ctx)
+	return err == nil && ok
 }
 
 func WaitFor(ctx context.Context, timeout time.Duration, onTick func()) (*Instance, error) {

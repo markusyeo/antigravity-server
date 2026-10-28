@@ -16,9 +16,9 @@ var historyManualAnchorRe = regexp.MustCompile(
 		`=\(\{sectionRefsMap:(?P<sections>` + historyIdentifier +
 		`),requestPageUpdate:` + historyIdentifier +
 		`,currentItemsSlice:.*?\{snapshot:(?P<snapshot>` + historyIdentifier +
-		`),tryRestoreSnapshot:.*?if\((?P<normalize>` + historyIdentifier +
+		`),tryRestoreSnapshot:.*?(?:if\(|=)(?P<normalize>` + historyIdentifier +
 		`)\(` + historyIdentifier + `,\s*` + historyIdentifier +
-		`\)\.startIndex!==.*?let ` + historyIdentifier +
+		`\)\.startIndex(?:!==|.*?\.startIndex!==).*?let ` + historyIdentifier +
 		`=(?P<anchor>` + historyIdentifier + `)\(` + historyIdentifier +
 		`\);` + historyIdentifier + `&&` + historyIdentifier +
 		`\(.*?var ` + historyIdentifier + `=\(0,` + historyIdentifier +
@@ -28,9 +28,10 @@ var historyManualAnchorRe = regexp.MustCompile(
 		`\.current;.*?if\(\((?P<next>` + historyIdentifier + `)=` + historyIdentifier +
 		`\)&&!` + historyIdentifier + `\(` + historyIdentifier + `,` + historyIdentifier +
 		`\)\)\{)(?P<busy>` + historyIdentifier +
-		`)(?P<tail>\.current=!0;try\{.*?finally\{` + historyIdentifier +
-		`\(\)\}\},\[)(?P<deps>` + historyIdentifier + `(?:,` + historyIdentifier +
-		`)*)(?P<suffix>\]\);return\(0,` + historyIdentifier + `\.useMemo\))`,
+		`)(?P<tail>\.current=!0;try\{.*?(?:finally\{` + historyIdentifier +
+		`\(\)\}\}|\}\}\}\}finally\{` + historyIdentifier +
+		`\(\)\}\}),\[)(?P<deps>` + historyIdentifier + `(?:,` + historyIdentifier +
+		`)*)(?P<suffix>\]\)(?:;|,).*?return\(0,` + historyIdentifier + `\.useMemo\))`,
 )
 
 //go:embed history.js
